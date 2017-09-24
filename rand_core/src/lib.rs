@@ -90,7 +90,9 @@ pub trait Rng {
     /// 1 is required. A different implementation might use `next_u32` and
     /// only consume 4 bytes; *however* any change affecting *reproducibility*
     /// of output must be considered a breaking change.
-    fn try_fill(&mut self, dest: &mut [u8]) -> Result<()>;
+    fn try_fill(&mut self, dest: &mut [u8]) -> Result<()> {
+        impls::try_fill_via_u32(self, dest)
+    }
 }
 
 #[cfg(feature="std")]

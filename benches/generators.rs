@@ -9,8 +9,8 @@ const BYTES_LEN: usize = 1024;
 use std::mem::size_of;
 use test::{black_box, Bencher};
 
-use rand::{Rng, NewSeeded, StdRng, OsRng, Rand, Default};
-use rand::prng::{XorShiftRng, IsaacRng, Isaac64Rng, ChaChaRng};
+use rand::{Rng, NewSeeded, SeedFromRng, StdRng, OsRng, Rand, Default};
+use rand::prng::{XorShiftRng, XorshiftMult32Rng, XorshiftMultRng, PcgRng, Pcg64Rng, IsaacRng, Isaac64Rng, ChaChaRng};
 
 macro_rules! gen_bytes {
     ($fnn:ident, $gen:ident) => {
@@ -30,6 +30,10 @@ macro_rules! gen_bytes {
 }
 
 gen_bytes!(gen_bytes_xorshift, XorShiftRng);
+gen_bytes!(gen_bytes_xorshiftmult32, XorshiftMult32Rng);
+gen_bytes!(gen_bytes_xorshiftmult, XorshiftMultRng);
+gen_bytes!(gen_bytes_pcg, PcgRng);
+gen_bytes!(gen_bytes_pcg64, Pcg64Rng);
 gen_bytes!(gen_bytes_isaac, IsaacRng);
 gen_bytes!(gen_bytes_isaac64, Isaac64Rng);
 gen_bytes!(gen_bytes_chacha, ChaChaRng);
@@ -37,24 +41,86 @@ gen_bytes!(gen_bytes_std, StdRng);
 gen_bytes!(gen_bytes_os, OsRng);
 
 
-macro_rules! gen_usize {
+macro_rules! gen_u32 {
     ($fnn:ident, $gen:ident) => {
         #[bench]
         fn $fnn(b: &mut Bencher) {
             let mut rng = $gen::new().unwrap();
             b.iter(|| {
                 for _ in 0..RAND_BENCH_N {
-                    black_box(usize::rand(&mut rng, Default));
+                    black_box(u32::rand(&mut rng, Default));
                 }
             });
-            b.bytes = size_of::<usize>() as u64 * RAND_BENCH_N;
+            b.bytes = size_of::<u32>() as u64 * RAND_BENCH_N;
         }
     }
 }
 
-gen_usize!(gen_usize_xorshift, XorShiftRng);
-gen_usize!(gen_usize_isaac, IsaacRng);
-gen_usize!(gen_usize_isaac64, Isaac64Rng);
-gen_usize!(gen_usize_chacha, ChaChaRng);
-gen_usize!(gen_usize_std, StdRng);
-gen_usize!(gen_usize_os, OsRng);
+gen_u32!(gen_u32_xorshift, XorShiftRng);
+gen_u32!(gen_u32_xorshiftmult32, XorshiftMult32Rng);
+gen_u32!(gen_u32_xorshiftmult, XorshiftMultRng);
+gen_u32!(gen_u32_pcg, PcgRng);
+gen_u32!(gen_u32_pcg64, Pcg64Rng);
+gen_u32!(gen_u32_isaac, IsaacRng);
+gen_u32!(gen_u32_isaac64, Isaac64Rng);
+gen_u32!(gen_u32_chacha, ChaChaRng);
+gen_u32!(gen_u32_std, StdRng);
+gen_u32!(gen_u32_os, OsRng);
+
+
+macro_rules! gen_u64 {
+    ($fnn:ident, $gen:ident) => {
+        #[bench]
+        fn $fnn(b: &mut Bencher) {
+            let mut rng = $gen::new().unwrap();
+            b.iter(|| {
+                for _ in 0..RAND_BENCH_N {
+                    black_box(u64::rand(&mut rng, Default));
+                }
+            });
+            b.bytes = size_of::<u64>() as u64 * RAND_BENCH_N;
+        }
+    }
+}
+
+gen_u64!(gen_u64_xorshift, XorShiftRng);
+gen_u64!(gen_u64_xorshiftmult32, XorshiftMult32Rng);
+gen_u64!(gen_u64_xorshiftmult, XorshiftMultRng);
+gen_u64!(gen_u64_pcg, PcgRng);
+gen_u64!(gen_u64_pcg64, Pcg64Rng);
+gen_u64!(gen_u64_isaac, IsaacRng);
+gen_u64!(gen_u64_isaac64, Isaac64Rng);
+gen_u64!(gen_u64_chacha, ChaChaRng);
+gen_u64!(gen_u64_std, StdRng);
+gen_u64!(gen_u64_os, OsRng);
+
+macro_rules! init_gen {
+    ($fnn:ident, $gen:ident) => {
+        #[bench]
+        fn $fnn(b: &mut Bencher) {
+            let mut rng = OsRng::new().unwrap();
+            b.iter(|| {
+                for _ in 0..RAND_BENCH_N {
+                    black_box($gen::from_rng(&mut rng).unwrap());
+                }
+            });
+        }
+    }
+}
+
+init_gen!(init_xorshift, XorShiftRng);
+init_gen!(init_isaac, IsaacRng);
+init_gen!(init_isaac64, Isaac64Rng);
+init_gen!(init_chacha, ChaChaRng);
+init_gen!(init_std, StdRng);
+
+#[bench]
+fn xorshift_jump(b: &mut Bencher) {
+    let mut rng = XorshiftMult32Rng::new().unwrap();
+    b.iter(|| {
+        for _ in 0..RAND_BENCH_N {
+            rng.jump();
+            black_box(rng.next_u32());
+        }
+    });
+}

@@ -48,9 +48,21 @@ mod isaac;
 mod isaac64;
 mod isaac_word;
 mod xorshift;
+#[cfg(feature = "i128_support")]
+mod xorshiftmult;
+mod xorshiftmult32;
+mod pcg;
+#[cfg(feature = "i128_support")]
+mod pcg64;
 
 pub use self::chacha::ChaChaRng;
 pub use self::isaac::IsaacRng;
 pub use self::isaac64::Isaac64Rng;
 pub use self::isaac_word::IsaacWordRng;
+pub use self::pcg::PcgRng;
+#[cfg(feature = "i128_support")]
+pub use self::pcg64::Pcg64Rng;
 pub use self::xorshift::XorShiftRng;
+#[cfg(feature = "i128_support")]
+pub use self::xorshiftmult::XorshiftMultRng;
+pub use self::xorshiftmult32::XorshiftMult32Rng;
