@@ -344,6 +344,27 @@ impl XorshiftMult32Rng {
     }
 }
 
+impl Rng for XorshiftMult32Rng {
+    #[inline]
+    fn next_u32(&mut self) -> u32 {
+        ((w(self.xorshift() as u64) * w(D as u64)).0 >> 16) as u32
+    }
+
+    #[inline]
+    fn next_u64(&mut self) -> u64 {
+        ::rand_core::impls::next_u64_via_u32(self)
+    }
+
+    #[cfg(feature = "i128_support")]
+    fn next_u128(&mut self) -> u128 {
+        ::rand_core::impls::next_u128_via_u64(self)
+    }
+
+    fn try_fill(&mut self, dest: &mut [u8]) -> Result<()> {
+        ::rand_core::impls::try_fill_via_u32(self, dest)
+    }
+}
+
 impl SeedFromRng for XorshiftMult32Rng {
     fn from_rng<R: Rng+?Sized>(rng: &mut R) -> Result<Self> {
         // If one of the integers of the state is 0, that integer will remain 0
@@ -366,44 +387,14 @@ impl SeedFromRng for XorshiftMult32Rng {
     }
 }
 
-impl Rng for XorshiftMult32Rng {
-    #[inline]
-    fn next_u32(&mut self) -> u32 {
-        ((w(self.xorshift() as u64) * w(D as u64)).0 >> 16) as u32
-    }
-
-    #[inline]
-    fn next_u64(&mut self) -> u64 {
-        ::rand_core::impls::next_u64_via_u32(self)
-    }
-
-    #[cfg(feature = "i128_support")]
-    fn next_u128(&mut self) -> u128 {
-        ::rand_core::impls::next_u128_via_u64(self)
-    }
-
-    fn try_fill(&mut self, dest: &mut [u8]) -> Result<()> {
-        ::rand_core::impls::try_fill_via_u32(self, dest)
-    }
-}
-
 impl SeedableRng<[u32; 2]> for XorshiftMult32Rng {
-    /// Reseed a XorshiftMult32Rng. This will panic if `seed` is entirely 0.
-    fn reseed(&mut self, seed: [u32; 2]) {
-        assert!(!seed.iter().all(|&x| x == 0),
-                "XorshiftMult32Rng.reseed called with an all zero seed.");
-
-        // first xorshift step of the next round
-        self.s0 = w(seed[0]) ^ w(seed[0]) << A;
-        self.s1 = w(seed[1]);
-    }
-
     /// Create a new XorshiftMult32Rng. This will panic if `seed` is entirely 0.
     fn from_seed(seed: [u32; 2]) -> XorshiftMult32Rng {
         assert!(!seed.iter().all(|&x| x == 0),
                 "XorshiftMult32Rng.reseed called with an all zero seed.");
 
         XorshiftMult32Rng {
+            // first xorshift step of the next round
             s0: w(seed[0]) ^ w(seed[0]) << A,
             s1: w(seed[1]),
         }

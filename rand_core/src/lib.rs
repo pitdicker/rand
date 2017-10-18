@@ -17,10 +17,18 @@
 //! `Rng` is the core trait implemented by algorithmic pseudo-random number
 //! generators and external random-number sources.
 //! 
-//! `SeedFromRng` and `SeedableRng` are extension traits.
+//! `SeedFromRng` and `SeedableRng` are extension traits for construction and
+//! reseeding.
 //! 
 //! `Error` and `Result` are provided for error-handling. They are safe to use
 //! in `no_std` environments.
+//! 
+//! The `impls` sub-module includes a few small functions to assist
+//! implementation of `Rng`. Since this module is only of interest to `Rng`
+//! implementors, it is not re-exported from `rand`.
+//! 
+//! The `mock` module includes a mock `Rng` implementation. Even though this is
+//! only useful for testing, it is currently always built.
 
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk.png",
        html_favicon_url = "https://www.rust-lang.org/favicon.ico",
@@ -95,8 +103,27 @@ pub trait Rng {
     }
 }
 
+impl<'a, R: Rng+?Sized> Rng for &'a mut R {
+    fn next_u32(&mut self) -> u32 {
+        (**self).next_u32()
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        (**self).next_u64()
+    }
+
+    #[cfg(feature = "i128_support")]
+    fn next_u128(&mut self) -> u128 {
+        (**self).next_u128()
+    }
+
+    fn try_fill(&mut self, dest: &mut [u8]) -> Result<()> {
+        (**self).try_fill(dest)
+    }
+}
+
 #[cfg(feature="std")]
-impl<R> Rng for Box<R> where R: Rng+?Sized {
+impl<R: Rng+?Sized> Rng for Box<R> {
     fn next_u32(&mut self) -> u32 {
         (**self).next_u32()
     }
@@ -117,7 +144,8 @@ impl<R> Rng for Box<R> where R: Rng+?Sized {
 
 
 /// Support mechanism for creating random number generators seeded by other
-/// generators. All PRNGs should support this to enable `NewSeeded` support.
+/// generators. All PRNGs should support this to enable `NewSeeded` support,
+/// which should be the preferred way of creating randomly-seeded generators.
 /// 
 /// TODO: should this use `Distribution` instead? That would require moving
 /// that trait and a distribution type to this crate.
@@ -138,13 +166,14 @@ pub trait SeedFromRng: Sized {
 
 /// A random number generator that can be explicitly seeded to produce
 /// the same stream of randomness multiple times.
+/// 
+/// Note: this should only be implemented by reproducible generators (i.e.
+/// where the algorithm is fixed and results should be the same across
+/// platforms). This should not be implemented by wrapper types which choose
+/// the underlying implementation based on platform, or which may change the
+/// algorithm used in the future. This is to ensure that manual seeding of PRNGs
+/// actually does yield reproducible results.
 pub trait SeedableRng<Seed>: Rng {
-    /// Reseed an RNG with the given seed.
-    /// 
-    /// The type of `Seed` is specified by the implementation (implementation
-    /// for multiple seed types is possible).
-    fn reseed(&mut self, Seed);
-
     /// Create a new RNG with the given seed.
     /// 
     /// The type of `Seed` is specified by the implementation (implementation
@@ -153,9 +182,12 @@ pub trait SeedableRng<Seed>: Rng {
 }
 
 
-/// Error type for cryptographic generators. Only operating system and hardware
-/// generators should be able to fail. In such cases there is little that can
-/// be done besides try again later.
+/// Error type for cryptographic generators. Technically external generators
+/// such as the operating system or hardware generators could fail. A PRNG
+/// (algorithm) could also fail if it detects cycles, though most PRNGs have
+/// sufficiently long cycles that looping is not usually feasible.
+/// 
+/// TODO: how should error details be reported?
 #[derive(Debug)]
 pub struct Error;
 

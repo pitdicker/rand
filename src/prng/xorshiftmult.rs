@@ -91,6 +91,26 @@ impl XorshiftMultRng {
     }
 }
 
+impl Rng for XorshiftMultRng {
+    #[inline]
+    fn next_u32(&mut self) -> u32 {
+        (self.xorshift().wrapping_mul(D) >> 16) as u32
+    }
+
+    #[inline]
+    fn next_u64(&mut self) -> u64 {
+        ((self.xorshift() as u128 * D as u128) >> 32) as u64
+    }
+
+    fn next_u128(&mut self) -> u128 {
+        ::rand_core::impls::next_u128_via_u64(self)
+    }
+
+    fn try_fill(&mut self, dest: &mut [u8]) -> Result<()> {
+        ::rand_core::impls::try_fill_via_u64(self, dest)
+    }
+}
+
 impl SeedFromRng for XorshiftMultRng {
     fn from_rng<R: Rng+?Sized>(rng: &mut R) -> Result<Self> {
         // If one of the integers of the state is 0, that integer will remain 0
@@ -114,43 +134,14 @@ impl SeedFromRng for XorshiftMultRng {
     }
 }
 
-impl Rng for XorshiftMultRng {
-    #[inline]
-    fn next_u32(&mut self) -> u32 {
-        (self.xorshift().wrapping_mul(D) >> 16) as u32
-    }
-
-    #[inline]
-    fn next_u64(&mut self) -> u64 {
-        ((self.xorshift() as u128 * D as u128) >> 32) as u64
-    }
-
-    fn next_u128(&mut self) -> u128 {
-        ::rand_core::impls::next_u128_via_u64(self)
-    }
-
-    fn try_fill(&mut self, dest: &mut [u8]) -> Result<()> {
-        ::rand_core::impls::try_fill_via_u64(self, dest)
-    }
-}
-
 impl SeedableRng<[u64; 2]> for XorshiftMultRng {
-    /// Reseed a XorshiftMultRng. This will panic if `seed` is entirely 0.
-    fn reseed(&mut self, seed: [u64; 2]) {
-        assert!(!seed.iter().all(|&x| x == 0),
-                "XorShiftStar64Rng.reseed called with an all zero seed.");
-
-        // first xorshift step of the next round
-        self.s0 = seed[0] ^ (seed[0] << A);
-        self.s1 = seed[1];
-    }
-
     /// Create a new XorShiftStarRng. This will panic if `seed` is entirely 0.
     fn from_seed(seed: [u64; 2]) -> XorshiftMultRng {
         assert!(!seed.iter().all(|&x| x == 0),
                 "XorshiftMultRng.reseed called with an all zero seed.");
 
         XorshiftMultRng {
+            // first xorshift step of the next round
             s0: seed[0] ^ (seed[0] << A),
             s1: seed[1],
         }

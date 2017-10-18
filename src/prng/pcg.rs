@@ -26,26 +26,6 @@ pub struct PcgRng {
 const INCREMENT: u64 = 1442695040888963407;
 const MULTIPLIER: u64 = 6364136223846793005;
 
-impl PcgRng {
-    #[inline]
-    fn init(init_state: u64, increment: u64) -> PcgRng {
-        // TODO: explain
-        let mut state = init_state.wrapping_add(INCREMENT);
-        // increment must always be odd
-        // TODO: shift left if small number
-        let increment = increment | 1;
-        // prepare for the next round
-        state = state.wrapping_mul(MULTIPLIER).wrapping_add(increment);
-        PcgRng { state: state }
-    }
-}
-
-impl SeedFromRng for PcgRng {
-    fn from_rng<R: Rng+?Sized>(rng: &mut R) -> Result<Self> {
-        Ok(PcgRng::init(rng.next_u64()))
-    }
-}
-
 impl Rng for PcgRng {
     #[inline]
     fn next_u32(&mut self) -> u32 {
@@ -82,14 +62,40 @@ impl Rng for PcgRng {
     }
 }
 
-impl SeedableRng<[u64; 1]> for PcgRng {
-    /// Reseed a PcgRng.
-    fn reseed(&mut self, seed: [u64; 1]) {
-        self.state = seed[0]; // TODO
-    }
-
+impl SeedableRng<[u64; 2]> for PcgRng {
     /// Create a new PcgRng.
-    fn from_seed(seed: [u64; 1]) -> PcgRng {
-        PcgRng::init(seed[0])
+    fn from_seed(seed: [u64; 2]) -> PcgRng {
+        // Because the seed values are user supplied, we have to treat them
+        // carefully. While they should be random, we should be able to handle
+        // seeds with small numbers like 0, 1, 2, etc.
+
+        // Add the default increment to make sure the state has plenty of bits
+        // set for the first round. (This is similar to doing one LCG step like
+        // the reference implementation).
+        let mut state = seed[0].wrapping_add(INCREMENT);
+
+        // Ensure the increment is odd. Simply setting the last bit to 1 does
+        // not work wel for small increment numbers: {0, 1, 2, 3} would turn
+        // into {1, 1, 3, 3}.
+        let increment = (seed[1] << 1) | 1;
+
+        // In `next_u32` we use instruction-level parallelism to improve
+        // performance. It outputs a permutation of the previous state, while
+        // at the same time advancing the state.
+        // To make this optimisation not observable, we should do the first LCG
+        // step here.
+        state = state.wrapping_mul(MULTIPLIER).wrapping_add(increment);
+
+        PcgRng { state: state, increment: increment }
+    }
+}
+
+impl SeedFromRng for PcgRng {
+    fn from_rng<R: Rng+?Sized>(rng: &mut R) -> Result<Self> {
+        // We can expect the results from `rng` to be random, and not observed
+        // outside this function. Therefore we do not have to treat them as
+        // carefully as `from_seed`. We only have to make sure increment is odd.
+        Ok(PcgRng { state: rng.next_u64(),
+                    increment: rng.next_u64() | 1 })
     }
 }
