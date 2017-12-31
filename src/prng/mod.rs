@@ -44,7 +44,9 @@ pub mod chacha;
 pub mod hc128;
 mod isaac;
 mod isaac64;
+mod pcg;
 mod xorshift;
+mod xoroshiro_mt;
 
 #[cfg(feature="serde-1")]
 mod isaac_serde;
@@ -53,4 +55,8 @@ pub use self::chacha::ChaChaRng;
 pub use self::hc128::Hc128Rng;
 pub use self::isaac::IsaacRng;
 pub use self::isaac64::Isaac64Rng;
+pub use self::pcg::PcgXsh64LcgRng;
+#[cfg(feature = "i128_support")]
+pub use self::pcg::PcgXsl128McgRng;
 pub use self::xorshift::XorShiftRng;
+pub use self::xoroshiro_mt::XoroshiroMtRng;

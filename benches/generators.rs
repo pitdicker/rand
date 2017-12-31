@@ -11,7 +11,9 @@ use test::{black_box, Bencher};
 
 use rand::{RngCore, Rng, SeedableRng, NewRng};
 use rand::{StdRng, SmallRng, OsRng, JitterRng, EntropyRng};
-use rand::{XorShiftRng, Hc128Rng, IsaacRng, Isaac64Rng, ChaChaRng};
+use rand::{ChaChaRng, Hc128Rng, IsaacRng, Isaac64Rng, XorShiftRng};
+use rand::prng::XoroshiroMtRng;
+use rand::prng::{PcgXsh64LcgRng, PcgXsl128McgRng};
 use rand::reseeding::ReseedingRng;
 use rand::prng::hc128::Hc128Core;
 use rand::thread_rng;
@@ -33,6 +35,9 @@ macro_rules! gen_bytes {
     }
 }
 
+gen_bytes!(gen_bytes_pcg64, PcgXsh64LcgRng::new());
+gen_bytes!(gen_bytes_pcg128, PcgXsl128McgRng::new());
+gen_bytes!(gen_bytes_xoroshiro_mt, XoroshiroMtRng::new());
 gen_bytes!(gen_bytes_xorshift, XorShiftRng::new());
 gen_bytes!(gen_bytes_hc128, Hc128Rng::new());
 gen_bytes!(gen_bytes_isaac, IsaacRng::new());
@@ -58,6 +63,9 @@ macro_rules! gen_uint {
     }
 }
 
+gen_uint!(gen_u32_pcg64, u32, PcgXsh64LcgRng::new());
+gen_uint!(gen_u32_pcg128, u32, PcgXsl128McgRng::new());
+gen_uint!(gen_u32_xoroshiro_mt, u32, XoroshiroMtRng::new());
 gen_uint!(gen_u32_xorshift, u32, XorShiftRng::new());
 gen_uint!(gen_u32_hc128, u32, Hc128Rng::new());
 gen_uint!(gen_u32_isaac, u32, IsaacRng::new());
@@ -66,6 +74,9 @@ gen_uint!(gen_u32_std, u32, StdRng::new());
 gen_uint!(gen_u32_small, u32, SmallRng::new());
 gen_uint!(gen_u32_os, u32, OsRng::new().unwrap());
 
+gen_uint!(gen_u64_pcg64, u64, PcgXsh64LcgRng::new());
+gen_uint!(gen_u64_pcg128, u64, PcgXsl128McgRng::new());
+gen_uint!(gen_u64_xoroshiro_mt, u64, XoroshiroMtRng::new());
 gen_uint!(gen_u64_xorshift, u64, XorShiftRng::new());
 gen_uint!(gen_u64_hc128, u64, Hc128Rng::new());
 gen_uint!(gen_u64_isaac, u64, IsaacRng::new());
