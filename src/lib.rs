@@ -962,6 +962,8 @@ pub trait SeedableRng: Sized {
         rng.try_fill_bytes(seed.as_mut())?;
         Ok(Self::from_seed(seed))
     }
+
+    fn from_seed_u64(seed: u64) -> Self;
 }
 
 
@@ -1045,6 +1047,10 @@ impl SeedableRng for StdRng {
 
     fn from_rng<R: Rng>(rng: &mut R) -> Result<Self, Error> {
         Hc128Rng::from_rng(rng).map(|rng| StdRng(rng))
+    }
+
+    fn from_seed_u64(seed: u64) -> Self {
+        StdRng(Hc128Rng::from_seed_u64(seed))
     }
 }
 

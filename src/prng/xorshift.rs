@@ -121,6 +121,14 @@ impl SeedableRng for XorShiftRng {
             w: w(seed_u32[3]),
         })
     }
+
+    fn from_seed_u64(seed: u64) -> Self {
+        let mut full_seed = Self::Seed::default();
+        impls::fill_slice_by_repeating(seed, full_seed.as_mut());
+        let mut rng = Self::from_seed(full_seed);
+        for _ in 0..20 { rng.next_u32(); }
+        rng
+    }
 }
 
 #[cfg(test)]

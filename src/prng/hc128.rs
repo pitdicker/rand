@@ -407,6 +407,12 @@ impl SeedableRng for Hc128Rng {
         le::read_u32_into(&seed, &mut seed_u32);
         Hc128Rng::init(seed_u32)
     }
+
+    fn from_seed_u64(seed: u64) -> Self {
+        let mut full_seed = Self::Seed::default();
+        impls::fill_slice_by_repeating(seed, full_seed.as_mut());
+        Self::from_seed(full_seed)
+    }
 }
 
 #[cfg(test)]

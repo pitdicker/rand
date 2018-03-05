@@ -109,22 +109,7 @@ impl Isaac64Rng {
     /// Create a 64-bit ISAAC random number generator using the
     /// default fixed seed.
     pub fn new_unseeded() -> Isaac64Rng {
-        Self::new_from_u64(0)
-    }
-
-    /// Creates an ISAAC-64 random number generator using an u64 as seed.
-    /// If `seed == 0` this will produce the same stream of random numbers as
-    /// the reference implementation when used unseeded.
-    pub fn new_from_u64(seed: u64) -> Isaac64Rng {
-        let mut key = [w(0); RAND_SIZE];
-        key[0] = w(seed);
-        // Initialize with only one pass.
-        // A second pass does not improve the quality here, because all of
-        // the seed was already available in the first round.
-        // Not doing the second pass has the small advantage that if `seed == 0`
-        // this method produces exactly the same state as the reference
-        // implementation when used unseeded.
-        init(key, 1)
+        Self::from_seed_u64(0)
     }
 
     /// Refills the output buffer (`self.rsl`)
@@ -337,6 +322,21 @@ impl SeedableRng for Isaac64Rng {
         }
 
         Ok(init(seed, 2))
+    }
+
+    /// Creates an ISAAC-64 random number generator using an u64 as seed.
+    /// If `seed == 0` this will produce the same stream of random numbers as
+    /// the reference implementation when used unseeded.
+    fn from_seed_u64(seed: u64) -> Self {
+        let mut key = [w(0); RAND_SIZE];
+        key[0] = w(seed);
+        // Initialize with only one pass.
+        // A second pass does not improve the quality here, because all of
+        // the seed was already available in the first round.
+        // Not doing the second pass has the small advantage that if `seed == 0`
+        // this method produces exactly the same state as the reference
+        // implementation when used unseeded.
+        init(key, 1)
     }
 }
 

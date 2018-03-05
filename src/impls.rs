@@ -167,4 +167,53 @@ pub fn next_u64_via_fill<R: RngCore + ?Sized>(rng: &mut R) -> u64 {
     impl_uint_from_fill!(rng, u64, 8)
 }
 
+pub fn fill_slice_by_repeating(int: u64, seed: &mut [u8]) {
+    let int = int.to_le();
+    let slice = unsafe {
+        let ptr = &int as *const u64 as *const u8;
+        slice::from_raw_parts(ptr, 8)
+    };
+    for (x, y) in seed.iter_mut().zip(slice.iter().cycle()) { *x = *y; }
+}
+
+pub fn fill_slice_with splitmix(int: u64, seed: &mut [u8]) {
+    let int = int.to_le();
+    let slice = unsafe {
+        let ptr = &int as *const u64 as *const u8;
+        slice::from_raw_parts(ptr, 8)
+    };
+    for (x, y) in seed.iter_mut().zip(slice.iter().cycle()) { *x = *y; }
+        // Initialize the first integer of the state directly with the seed.
+        // The second integer is generated with a SplitMix64 RNG[1] from the
+        // same seed, as recommended by Sebastiano Vigna[2].
+        //
+        // This implementation followes his, which doesn't support different
+        // streams with ɣ-values (completely unnecessary here), and with the
+        // finalizer constants from David Stafford’s Mix13 variant[3] of the
+        // MurmurHash3 finalizer (also mentioned as a good variant in [1]).
+        //
+        // The Xorshift algorithm does not work if the entire seed is 0. If the
+        // second integer is generated with SplitMix it is impossible for both
+        // integers to be zero.
+        //
+        // [1] Guy Steele, Doug Lea, Christine Flood (Oktober 2014).
+        //     ["Fast Splittable Pseudorandom Number Generators"]
+        //     (http://gee.cs.oswego.edu/dl/papers/oopsla14.pdf)
+        // [2] Sebastiano Vigna, David Blackman (2016). ["xoroshiro+ /
+        //     xorshift* / xorshift+ generators and the PRNG shootout"]
+        //     (http://vigna.di.unimi.it/xorshift/).
+        // [3] David Stafford (September 2011). ["Better bit mixing: Improving
+        //     on MurmurHash3’s 64-bit finalizer"]
+        //     (http://zimbry.blogspot.nl/2011/09/better-bit-mixing-improving-on.html).
+        let s0 = seed;
+        // TODO: does the trick from 32-bit make sense?
+
+        let mut s1 = s0.wrapping_add(0x9E3779B97F4A7C15); // Weyl sequence, golden ratio * 2^64
+        s1 = (s1 ^ (s1 >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+        s1 = (s1 ^ (s1 >> 27)).wrapping_mul(0x94D049BB133111EB);
+        s1 ^ (s1 >> 31);
+
+        XorshiftMultRng { s0: s0, s1: s1 }
+}
+
 // TODO: implement tests for the above

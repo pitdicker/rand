@@ -257,6 +257,7 @@ impl CryptoRng for ChaChaRng {}
 
 impl SeedableRng for ChaChaRng {
     type Seed = [u8; SEED_WORDS*4];
+
     fn from_seed(seed: Self::Seed) -> Self {
         let mut seed_le = [0u32; SEED_WORDS];
         le::read_u32_into(&seed, &mut seed_le);
@@ -269,6 +270,12 @@ impl SeedableRng for ChaChaRng {
             index: STATE_WORDS, // generate on first use
             rounds: 20,
          }
+    }
+
+    fn from_seed_u64(seed: u64) -> Self {
+        let mut full_seed = Self::Seed::default();
+        impls::fill_slice_by_repeating(seed, full_seed.as_mut());
+        Self::from_seed(full_seed)
     }
 }
 
