@@ -90,6 +90,11 @@ pub trait SliceRandom {
     /// will perform a full shuffle.
     fn partial_shuffle<R>(&mut self, rng: &mut R, amount: usize)
         -> (&mut [Self::Item], &mut [Self::Item]) where R: Rng + ?Sized;
+
+    /// Produces an iterator that chooses `amount` elements from the slice at
+    /// random without repeating any.
+    fn choose_multiple<R>(&self, rng: &mut R, amount: usize)
+        -> ReservoirSampler<R> where R: Rng + ?Sized;
 }
 
 impl<T> SliceRandom for [T] {
@@ -162,6 +167,12 @@ impl<T> SliceRandom for [T] {
 
         let r = self.split_at_mut(stop);
         (r.1, r.0)
+    }
+
+    fn choose_multiple<R>(&self, rng: &mut R, amount: usize)
+        -> ReservoirSampler<R> where R: Rng + ?Sized
+    {
+    
     }
 }
 
