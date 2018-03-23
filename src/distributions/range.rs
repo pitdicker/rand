@@ -468,6 +468,131 @@ range_float_impl! { f32, 32 - 23, next_u32 }
 range_float_impl! { f64, 64 - 52, next_u64 }
 
 
+/*
+/// Implementation of `RangeImpl` for float types.
+#[derive(Clone, Copy, Debug)]
+pub enum RangeFloat<X> {
+    // A range that is completely positive
+    #[doc(hidden)]
+    Positive { offset: X, scale: X },
+    // A range that is completely negative
+    #[doc(hidden)]
+    Negative { offset: X, scale: X },
+    // A range that is goes from negative to positive, but has more positive
+    // than negative numbers
+    #[doc(hidden)]
+    PosAndNeg { cutoff: X, scale: X },
+    // A range that is goes from negative to positive, but has more negative
+    // than positive numbers
+    #[doc(hidden)]
+    NegAndPos { cutoff: X, scale: X },
+}
+
+macro_rules! range_float_impl {
+    ($ty:ty, $next_u:path) => {
+        impl SampleRange for $ty {
+            type T = RangeFloat<$ty>;
+        }
+
+        impl RangeImpl for RangeFloat<$ty> {
+            // We can distinguish between two different kinds of ranges:
+            //
+            // Completely positive or negative.
+            // A characteristic of these ranges is that they get more bits of
+            // precision as they get closer to 0.0. For positive ranges it is as
+            // simple as applying a scale and offset to get the right range.
+            // For a negative range, we apply a negative scale to transform the
+            // range [0,1) to (-x,0]. Because this results in a range with it
+            // closed and open sides reversed, we do not sample from
+            // `closed_open01` but from `open_closed01`.
+            //
+            // A range that is both negative and positive.
+            // This range has as characteristic that it does not have most of
+            // its bits of precision near its low or high end, but in the middle
+            // near 0.0. As the basis we use the [-1,1) range from
+            // `closed_open11`.
+            // How it works is easiest to explain with an example.
+            // Suppose we want to sample from the range [-20, 100). We are
+            // first going to scale the range from [-1,1) to (-60,60]. Note the
+            // range changes from closed-open to open-closed because the scale
+            // is negative.
+            // If the sample happens to fall in the part (-60,-20), move it to
+            // (-100,60). Then multiply by -1.
+            // Scaling keeps the bits of precision intact. Moving the assymetric
+            // part also does not waste precision, as the more you move away
+            // from zero the less precision can be stored.
+
+            type X = $ty;
+
+            fn new(low: Self::X, high: Self::X) -> Self {
+                if low >= 0.0 {
+                    RangeFloat::Positive {
+                        offset: low,
+                        scale: high - low,
+                    }
+                } else if high <= 0.0 {
+                    RangeFloat::Negative {
+                        offset: high,
+                        scale: low - high,
+                    }
+                } else if -low <= high {
+                    RangeFloat::PosAndNeg {
+                        cutoff: low,
+                        scale: (high + low) / -2.0 + low,
+                    }
+                } else {
+                    RangeFloat::NegAndPos {
+                        cutoff: high,
+                        scale: (high + low) / 2.0 - high,
+                    }
+                }
+            }
+
+            fn new_inclusive(low: Self::X, high: Self::X) -> Self {
+                // Same as `new`, because the boundaries of a floats range are
+                // (at least currently) not exact due to rounding errors.
+                RangeImpl::new(low, high)
+            }
+
+            fn sample<R: RngCore + ?Sized>(&self, rng: &mut R) -> Self::X {
+                let rnd = $next_u(rng);
+                match *self {
+                    RangeFloat::Positive { offset, scale } => {
+                        let x: $ty = rnd.closed_open01();
+                        offset + scale * x
+                    }
+                    RangeFloat::Negative { offset, scale } => {
+                        let x: $ty = rnd.open_closed01();
+                        offset + scale * x
+                    }
+                    RangeFloat::PosAndNeg { cutoff, scale } => {
+                        let x: $ty = rnd.closed_open11();
+                        let x = x * scale;
+                        if x < cutoff {
+                            (cutoff - scale) - x
+                        } else {
+                            x
+                        }
+                    }
+                    RangeFloat::NegAndPos { cutoff, scale } => {
+                        let x: $ty = rnd.closed_open11();
+                        let x = x * scale;
+                        if x >= cutoff {
+                            (cutoff + scale) - x
+                        } else {
+                            x
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+range_float_impl! { f32, RngCore::next_u32 }
+range_float_impl! { f64, RngCore::next_u64 }
+*/
+
 #[cfg(test)]
 mod tests {
     use Rng;
