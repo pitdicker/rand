@@ -626,7 +626,8 @@ pub trait Rng: RngCore {
     /// println!("{:?}", y);
     /// ```
     fn shuffle<T>(&mut self, values: &mut [T]) {
-        seq::shuffle(self, values)
+        use seq::SliceRandom;
+        values.shuffle(self)
     }
 }
 
