@@ -14,6 +14,7 @@ use core;
 use core::cmp;
 use Rng;
 use distributions::range::WideningMultiply;
+use distributions::Exp1;
 
 #[cfg(feature="std")] use std::collections::HashMap;
 #[cfg(all(feature="alloc", not(feature="std")))] use alloc::btree_map::BTreeMap;
@@ -84,6 +85,13 @@ pub trait SliceRandom {
     /// `None` if the slice is empty.
     fn pick_mut<R>(&mut self, rng: &mut R) -> Option<&mut Self::Item>
         where R: Rng + ?Sized;
+
+    /// Produces an iterator that chooses `amount` elements from the slice at
+    /// random without repeating any, in sequential order.
+    fn pick_multiple<'a, R: Rng>(&'a self, amount: usize, rng: &'a mut R)
+        -> RandomSampler<'a, Self::Item, R>;
+
+    // TODO: pick_multiple_mut
 }
 
 impl<T> SliceRandom for [T] {
@@ -160,7 +168,228 @@ impl<T> SliceRandom for [T] {
             Some(&mut self[rng.gen_range(0, len)])
         }
     }
+
+    fn pick_multiple<'a, R: Rng>(&'a self, amount: usize, rng: &'a mut R)
+        -> RandomSampler<'a, Self::Item, R>
+    {
+        let sampler = SequentialRandomSampler::new(amount, self.len(), rng);
+        RandomSampler {
+            slice: self,
+            index: 0,
+            sampler: sampler,
+            rng: rng,
+        }
+    }
 }
+
+#[derive(Debug)]
+pub struct RandomSampler<'a, T: 'a, R: Rng + 'a> {
+    slice: &'a [T],
+    index: usize, // FIXME: or do we want to move the base pointer of the slice?
+    sampler: SequentialRandomSampler,
+    rng: &'a mut R,
+}
+
+impl<'a, T: 'a, R: Rng + 'a> Iterator for RandomSampler<'a, T, R> {
+    type Item = &'a T;
+
+    #[inline(always)]
+    fn next(&mut self) -> Option<&'a T> {
+        if self.sampler.n > 1 {
+            self.index += self.sampler.calculate_skip(self.rng) + 1;
+            Some(&self.slice[self.index - 1])
+        } else if self.sampler.n == 1 {
+            // Optimization: only one more element left to sample.
+            // Pick directly, instead of calculating the number of elements
+            // to skip.
+            self.index += (self.sampler.remaining as f64 * self.sampler.v_prime) as usize;
+            self.sampler.n = 0;
+            Some(&self.slice[self.index])
+        } else {
+            None
+        }
+    }
+}
+
+impl<'a, T: 'a, R: Rng + 'a> ExactSizeIterator for RandomSampler<'a, T, R> {
+    // Remaining number of iterations.
+    fn len(&self) -> usize {
+        self.sampler.n
+    }
+}
+
+/*
+Jeffrey Vitter introduced algorithm **A** and **D** (Edit: and **B** and **C** in-between) to efficiently sample from a known number of elements sequentially, without needing extra memory. ([*Faster Methods for Random Sampling*](http://www.mathcs.emory.edu/~cheung/papers/StreamDB/RandomSampling/1984-Vitter-Faster-random-sampling.pdf), 1984 and [*Efficient Algorithm for Sequential Random Sampling*](http://www.ittc.ku.edu/~jsv/Papers/Vit87.RandomSampling.pdf), 1987)
+
+K. Aiyappan Nair improved upon it with algorithm **E**. (*An Improved Algorithm for Ordered Sequential Random Sampling*, 1990)
+*/
+
+
+// We convert between `f64` and `usize` without caring about possible round-off
+// errors. All `usize` values up to 2^52 are exactly representable in `f64`.
+// For comparison: on 32-bit we can't have slices > 2^31, and on 64-bit the
+// current virtual address space is limited to 2^48 (256 TiB).
+#[derive(Debug)]
+struct SequentialRandomSampler {
+    // remaining number of elements to sample from.
+    pub remaining: usize, // Called `N` in the paper.
+    // number of elements that should still be sampled.
+    pub n: usize,
+    // Values cached between runs:
+    v_prime: f64,     // FIXME
+    threshold: usize, // threshold before switching from method D to method A.
+}
+
+// Threshold before switching from method D to method A.
+// Typical values of α can be expected in the range 0.05-0.15. The paper
+// suggests 1/13, but we because we can make use of the fast Ziggurat method to
+// generate exponential values, our method D is relatively fast so α = 1/10
+// seems better.
+const ALPHA_INV: usize = 10; // (1.0 / α)
+
+impl SequentialRandomSampler {
+    fn new<R: Rng>(n: usize, total: usize, rng: &mut R) -> Self {
+        let n = cmp::min(n, total);
+        Self {
+            remaining: total,
+            n: n,
+            v_prime: (rng.gen::<f64>().ln() / (n as f64)).exp(),
+            threshold: n * ALPHA_INV,
+        }
+    }
+
+    // FIXME: should this handle n <= 1?
+    fn calculate_skip<R: Rng>(&mut self, rng: &mut R) -> usize {
+        if self.remaining > self.threshold {
+            self.threshold -= ALPHA_INV;
+            self.method_d_skip(rng)
+        } else {
+            self.threshold -= ALPHA_INV;
+            self.method_a_skip(rng)
+        }
+    }
+
+    fn method_a_skip<R: Rng>(&mut self, rng: &mut R) -> usize {
+        let mut skip = 0; // Called `S` in the paper.
+        let mut remaining_f = self.remaining as f64;
+        let n_f = self.n as f64;
+
+        // Step A1
+        let v: f64 = rng.gen();
+
+        // Step A2
+        // Search sequentially for the smallest integer S satisfying the
+        // inequality  V ≤ ((N - n) / n)^(S+1).
+        let mut top = remaining_f - n_f;
+        let mut quot = top / remaining_f;
+        while quot > v {
+            skip += 1;
+            top -= 1.0;
+            remaining_f -= 1.0;
+            quot = quot * top / remaining_f;
+        }
+
+        // Prepare variables for the next iteration.
+        // Note: the paper(s) forgot to subtract `skip`.
+        self.remaining -= skip + 1;
+        self.n -= 1;
+        skip
+    }
+
+    fn method_d_skip<R: Rng>(&mut self, rng: &mut R) -> usize {
+        let mut skip; // Called `S` in the paper.
+
+        // Cache a couple of variables and expressions we use multiple times.
+        let remaining_f = self.remaining as f64;
+        let n_f = self.n as f64;
+        let ninv = 1.0 / n_f;
+        let nmin1inv = 1.0 / (n_f - 1.0);
+        let qu1 = self.remaining - self.n + 1;
+        let qu1_f = remaining_f - n_f + 1.0;
+
+        loop {
+            // Step D2: Generate U and X.
+            // "Generate a random variate U that is uniformly distributed
+            // between 0 and 1, and a random variate X that has density
+            // function or probability function g(x)."
+            //
+            //        ⎧  n  ⎛      x  ⎞ n-1
+            //        ⎪ --- ⎜ 1 - --- ⎟    ,   0 ≤ x ≤ N;
+            // g(x) = ⎨  N  ⎝      N  ⎠
+            //        ⎪
+            //        ⎩  0,                    otherwise;
+            //
+            // Note: we rename U → u and X → x.
+            let mut x;
+            loop {
+                x = remaining_f * (1.0 - self.v_prime);
+                skip = x as usize;
+                if skip < qu1 { break; }
+                self.v_prime = (-rng.sample(Exp1) * ninv).exp();
+            }
+            let skip_f = skip as f64;
+
+            // Step D3: Accept?
+            // Do a quick approximation to decide whether `x` should be rejected
+            //
+            // If `x` ≤ h(⌊x⌋)/cg(x), then set `skip` = ⌊x⌋ and go to Step D5.
+            // We use the fast method from formula (2.7 + 2.8) here.
+            //
+
+            //      ⎛     N U     ⎞ n-1    N - n + 1       N - X
+            // V' = ⎜ ----------- ⎟     --------------- * -------
+            //      ⎝  N - n + 1  ⎠      N - n - S + 1       N
+            //
+            // V' ≤ 1?
+            //
+            // Note: `qu1_f == N - n + 1`
+            let y1 = (1.0 / qu1_f - rng.sample(Exp1) * nmin1inv).exp();
+            self.v_prime =
+                y1 * (qu1_f / (qu1_f - skip_f)) * (1.0 - x / remaining_f);
+            if self.v_prime <= 1.0 { break; }
+
+            // Step D4: Accept?
+            // Try again using the more expensive method:
+            // If U ≤ f(⌊X⌋)/cg(X), then set S := ⌊X⌋.
+            // Otherwise, return to Step D2.
+            let mut y2 = 1.0;
+            let mut top = remaining_f - 1.0;
+
+            let mut bottom;
+            let limit;
+            if self.n > skip + 1 {
+                bottom = remaining_f - n_f;
+                limit = self.remaining - skip;
+            } else {
+                bottom = remaining_f - skip_f - 1.0;
+                limit = qu1;
+            }
+            let mut t = self.remaining - 1;
+            while t >= limit {
+                y2 = y2 * top / bottom;
+                top -= 1.0;
+                bottom -= 1.0;
+                t -= 1;
+            }
+
+            if remaining_f / (remaining_f - x) >= y1 * (y2.ln() * nmin1inv).exp() {
+                self.v_prime = (-rng.sample(Exp1) * nmin1inv).exp();
+                break; // Accept!
+            }
+
+            // We were unlucky, `x` is rejected.
+            // Generate a new V' and go back to the beginning.
+            self.v_prime = (-rng.sample(Exp1) * ninv).exp();
+        }
+
+        // Prepare variables for the next iteration.
+        // V' (`self.v_prime`) is already prepared in the loop)
+        self.remaining -= skip + 1;
+        self.n -= 1;
+        skip
+    }
+}
+
 
 /// Robert FLoyd's algorithm
 /// ```text
@@ -400,6 +629,30 @@ mod test {
     use {XorShiftRng, Rng, SeedableRng};
     #[cfg(all(feature="alloc", not(feature="std")))]
     use alloc::Vec;
+    use thread_rng;
+
+    #[test]
+    #[cfg(feature="alloc")]
+    fn test_algorithm_d() {
+        let min_val = 1;
+        let max_val = 1000;
+
+        let mut r = thread_rng();
+        let vals = (min_val..max_val).collect::<Vec<i32>>();
+        let small_sample: Vec<_> = vals.pick_multiple(15, &mut r).collect();
+
+        println!("{:?}", small_sample);
+    }
+
+    #[test]
+    #[cfg(feature="alloc")]
+    fn test_algorithm_d_50_of_100() {
+        let mut r = thread_rng();
+        let vals = (0..100).collect::<Vec<i32>>();
+        let small_sample: Vec<_> = vals.pick_multiple(50, &mut r).collect();
+
+        println!("{:?}", small_sample);
+    }
 
     #[test]
     #[cfg(feature="alloc")]
