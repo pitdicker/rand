@@ -234,7 +234,7 @@ pub mod mock;
 #[cfg(feature="std")] pub mod os;
 #[cfg(feature="std")] pub mod read;
 pub mod reseeding;
-#[cfg(feature = "alloc")] pub mod seq;
+pub mod seq;
 
 // These tiny modules are here to avoid API breakage, probably only temporarily
 pub mod chacha {
