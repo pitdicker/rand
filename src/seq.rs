@@ -10,15 +10,63 @@
 
 //! Functions for randomly accessing and sampling sequences.
 
-use super::Rng;
-
-// This crate is only enabled when either std or alloc is available.
-// BTreeMap is not as fast in tests, but better than nothing.
+use Rng;
 
 #[cfg(feature="std")] use std::collections::HashMap;
 #[cfg(all(feature="alloc", not(feature="std")))] use alloc::btree_map::BTreeMap;
 
 #[cfg(all(feature="alloc", not(feature="std")))] use alloc::Vec;
+
+pub trait SliceRandom {
+    type Item;
+
+    /// Returns a reference to one random element of the slice, or `None` if the
+    /// slice is empty.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use rand::thread_rng;
+    /// use rand::seq::SliceRandom;
+    ///
+    /// let choices = [1, 2, 4, 8, 16, 32];
+    /// let mut rng = thread_rng();
+    /// println!("{:?}", choices.pick(&mut rng));
+    /// assert_eq!(choices[..0].pick(&mut rng), None);
+    /// ```
+    fn pick<R>(&self, rng: &mut R) -> Option<&Self::Item>
+        where R: Rng + ?Sized;
+
+    /// Returns a mutable reference to one random element of the slice, or
+    /// `None` if the slice is empty.
+    fn pick_mut<R>(&mut self, rng: &mut R) -> Option<&mut Self::Item>
+        where R: Rng + ?Sized;
+}
+
+impl<T> SliceRandom for [T] {
+    type Item = T;
+
+    fn pick<R>(&self, rng: &mut R) -> Option<&Self::Item>
+        where R: Rng + ?Sized
+    {
+        if self.is_empty() {
+            None
+        } else {
+            Some(&self[rng.gen_range(0, self.len())])
+        }
+    }
+
+    fn pick_mut<R>(&mut self, rng: &mut R) -> Option<&mut Self::Item>
+        where R: Rng + ?Sized
+    {
+        if self.is_empty() {
+            None
+        } else {
+            let len = self.len();
+            Some(&mut self[rng.gen_range(0, len)])
+        }
+    }
+}
 
 /// Randomly sample `amount` elements from a finite iterator.
 ///
