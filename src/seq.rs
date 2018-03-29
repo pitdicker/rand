@@ -162,6 +162,29 @@ impl<T> SliceRandom for [T] {
     }
 }
 
+/// Robert FLoyd's algorithm
+/// ```text
+/// initialize set S to empty
+/// for J := N - M + 1 to N do
+///     T := RandInt(1, J)
+///     if T is not in S then
+///         insert T in S
+///       else
+///         insert J in S
+/// ```
+pub fn choose_from_range<R: Rng + ?Sized>(rng: &mut R, n: u32, results: &mut [u32]) {
+    let m = results.len() as u32;
+    assert!(m <= n); // FIXME: check
+    let s = results;
+
+    let mut i = 0;
+    for j in (n - m + 1)..(n + 1) { // FIXME: should this be N or N+1?
+        let t = rng.gen_range(1, j);
+        s[i] = if s[0..i].contains(&t) { j - 1 } else { j };
+        i += 1
+    }
+}
+
 /// Randomly sample `amount` elements from a finite iterator.
 ///
 /// The following can be returned:
