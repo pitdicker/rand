@@ -567,9 +567,10 @@ pub trait Rng: RngCore {
     }
 
     /// Shuffle a mutable slice in place.
-    ///
-    /// This applies Durstenfeld's algorithm for the [Fisher–Yates shuffle](https://en.wikipedia.org/wiki/Fisher%E2%80%93Yates_shuffle#The_modern_algorithm)
-    /// which produces an unbiased permutation.
+     ///
+    /// This applies Durstenfeld's algorithm for the [Fisher–Yates shuffle](
+    /// https://wikipedia.org/wiki/Fisher%E2%80%93Yates_shuffle), which produces
+    /// an unbiased permutation.
     ///
     /// # Example
     ///
@@ -584,13 +585,8 @@ pub trait Rng: RngCore {
     /// println!("{:?}", y);
     /// ```
     fn shuffle<T>(&mut self, values: &mut [T]) {
-        let mut i = values.len();
-        while i >= 2 {
-            // invariant: elements with index >= i have been locked in place.
-            i -= 1;
-            // lock element i in place.
-            values.swap(i, self.gen_range(0, i + 1));
-        }
+        use seq::SliceRandom;
+        values.shuffle(self)
     }
 }
 

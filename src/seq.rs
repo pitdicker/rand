@@ -10,7 +10,10 @@
 
 //! Functions for randomly accessing and sampling sequences.
 
+use core;
+use core::cmp;
 use Rng;
+use distributions::range::WideningMultiply;
 
 #[cfg(feature="std")] use std::collections::HashMap;
 #[cfg(all(feature="alloc", not(feature="std")))] use alloc::btree_map::BTreeMap;
@@ -19,6 +22,46 @@ use Rng;
 
 pub trait SliceRandom {
     type Item;
+
+    /// Shuffle a slice in place.
+    ///
+    /// This applies Durstenfeld's algorithm for the [Fisher–Yates shuffle](
+    /// https://wikipedia.org/wiki/Fisher%E2%80%93Yates_shuffle), which produces
+    /// an unbiased permutation.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use rand::thread_rng;
+    /// use rand::seq::SliceRandom;
+    ///
+    /// let mut rng = thread_rng();
+    /// let mut y = [1, 2, 3];
+    /// y.shuffle(&mut rng);
+    /// println!("{:?}", y);
+    /// y.shuffle(&mut rng);
+    /// println!("{:?}", y);
+    /// ```
+    fn shuffle<R>(&mut self, rng: &mut R)
+        where R: Rng + ?Sized;
+
+    /// Shuffle a slice in place, but exit early.
+    ///
+    /// Returns two mutable slices from the source slice. The first contains
+    /// `amount` elements randomly permuted. The second has the remaining
+    /// elements that are not fully shuffled.
+    ///
+    /// This is an efficient method to select `amount` elements at random from
+    /// the slice, provided the slice may be mutated.
+    ///
+    /// If you only need to chose elements randomly and `amount > self.len()/2`
+    /// then you may improve performance by taking
+    /// `amount = values.len() - amount` and using only the second slice.
+    ///
+    /// If `amount` is greater than the number of elements in the slice, this
+    /// will perform a full shuffle.
+    fn partial_shuffle<R>(&mut self, rng: &mut R, amount: usize)
+        -> (&mut [Self::Item], &mut [Self::Item]) where R: Rng + ?Sized;
 
     /// Returns a reference to one random element of the slice, or `None` if the
     /// slice is empty.
@@ -45,6 +88,57 @@ pub trait SliceRandom {
 
 impl<T> SliceRandom for [T] {
     type Item = T;
+
+    fn shuffle<R>(&mut self, rng: &mut R)
+        where R: Rng + ?Sized
+    {
+        let len = self.len();
+        self.partial_shuffle(rng, len);
+    }
+
+    fn partial_shuffle<R>(&mut self, rng: &mut R, amount: usize)
+        -> (&mut [Self::Item], &mut [Self::Item]) where R: Rng + ?Sized
+    {
+        let stop = self.len().saturating_sub(amount);
+
+        let mut i = self.len() as u64;
+        while i > cmp::max(1 << 31, stop as u64) {
+            i -= 1;
+            self.swap(i as usize, rng.gen_range(0, i + 1) as usize);
+        }
+
+        let mut i = i as u32;
+        while i > cmp::max(1 << 15, stop as u32) {
+            i -= 1;
+            self.swap(i as usize, rng.gen_range(0, i + 1) as usize);
+        }
+
+        let mut i = i as u16;
+        while i > cmp::max(4, stop as u16) {
+            // Reimplement the range reduction here, because we can do better
+            // than generating 32 bits and throwing away half of them.
+            let mut value: u64 = rng.gen();
+            for _ in 0..4 {
+                let val = value as u16;
+                value = value >> 16;
+                let range = i + 1;
+                let (hi, lo) = val.wmul(range);
+                let zone = core::u16::MAX - (core::u16::MAX - range + 1) % range;
+                if lo <= zone {
+                    i -= 1;
+                    self.swap(i as usize, hi as usize);
+                }
+            }
+        }
+
+        while i > cmp::max(1, stop as u16) {
+            i -= 1;
+            self.swap(i as usize, rng.gen_range(0, i + 1) as usize);
+        }
+
+        let r = self.split_at_mut(stop);
+        (r.1, r.0)
+    }
 
     fn pick<R>(&self, rng: &mut R) -> Option<&Self::Item>
         where R: Rng + ?Sized
