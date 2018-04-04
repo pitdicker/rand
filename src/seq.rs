@@ -217,7 +217,43 @@ impl<'a, T: 'a, R: Rng + 'a> ExactSizeIterator for RandomSampler<'a, T, R> {
         self.sampler.n
     }
 }
+/*
+#[derive(Debug)]
+pub struct RandomSamplerMut<'a, T: 'a, R: Rng + 'a> {
+    slice: &'a mut [T],
+    index: usize, // FIXME: or do we want to move the base pointer of the slice?
+    sampler: SequentialRandomSampler,
+    rng: &'a mut R,
+}
 
+impl<'a, T: 'a, R: Rng + 'a> Iterator for RandomSamplerMut<'a, T, R> {
+    type Item = &'a mut T;
+
+    #[inline(always)]
+    fn next(&mut self) -> Option<&'a mut T> {
+        if self.sampler.n > 1 {
+            self.index += self.sampler.calculate_skip(self.rng) + 1;
+            self.slice.get_mut(self.index - 1)
+        } else if self.sampler.n == 1 {
+            // Optimization: only one more element left to sample.
+            // Pick directly, instead of calculating the number of elements
+            // to skip.
+            self.index += (self.sampler.remaining as f64 * self.sampler.v_prime) as usize;
+            self.sampler.n = 0;
+            Some(&mut self.slice[self.index])
+        } else {
+            None
+        }
+    }
+}
+
+impl<'a, T: 'a, R: Rng + 'a> ExactSizeIterator for RandomSamplerMut<'a, T, R> {
+    // Remaining number of iterations.
+    fn len(&self) -> usize {
+        self.sampler.n
+    }
+}
+*/
 /*
 Jeffrey Vitter introduced algorithm **A** and **D** (Edit: and **B** and **C** in-between) to efficiently sample from a known number of elements sequentially, without needing extra memory. ([*Faster Methods for Random Sampling*](http://www.mathcs.emory.edu/~cheung/papers/StreamDB/RandomSampling/1984-Vitter-Faster-random-sampling.pdf), 1984 and [*Efficient Algorithm for Sequential Random Sampling*](http://www.ittc.ku.edu/~jsv/Papers/Vit87.RandomSampling.pdf), 1987)
 
@@ -389,6 +425,9 @@ impl SequentialRandomSampler {
         skip
     }
 }
+
+
+
 
 
 /// Robert FLoyd's algorithm
