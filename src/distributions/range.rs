@@ -422,8 +422,8 @@ wmul_impl_usize! { u64 }
 /// Implementation of `RangeImpl` for float types.
 #[derive(Clone, Copy, Debug)]
 pub struct RangeFloat<X> {
-    scale: X,
-    offset: X,
+    pub(crate) scale: X,
+    pub(crate) offset: X,
 }
 
 macro_rules! range_float_impl {

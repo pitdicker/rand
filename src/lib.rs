@@ -173,6 +173,8 @@
 #![deny(missing_debug_implementations)]
 #![doc(test(attr(allow(unused_variables), deny(warnings))))]
 
+#![feature(stdsimd)]
+
 #![cfg_attr(not(feature="std"), no_std)]
 #![cfg_attr(all(feature="alloc", not(feature="std")), feature(alloc))]
 #![cfg_attr(all(feature="i128_support", feature="nightly"), allow(stable_features))] // stable since 2018-03-27
@@ -217,6 +219,7 @@ pub mod jitter; // Public because of the error type.
 pub mod mock;   // Public so we don't export `StepRng` directly, making it a bit
                 // more clear it is intended for testing.
 pub mod prng;
+pub mod simd;
 #[cfg(feature="std")] pub mod read;
 #[cfg(feature = "alloc")] pub mod seq;
 

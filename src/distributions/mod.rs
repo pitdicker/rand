@@ -58,7 +58,7 @@ mod other;
 #[cfg(feature="std")]
 mod ziggurat_tables;
 #[cfg(feature="std")]
-use distributions::float::IntoFloat;
+pub(crate) use distributions::float::IntoFloat;
 
 /// Types that can be used to create a random instance of `Support`.
 #[deprecated(since="0.5.0", note="use Distribution instead")]
