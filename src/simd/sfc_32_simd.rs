@@ -2,14 +2,17 @@
 use core::simd::*;
 use core::fmt;
 
+use rand_core::BlockRngCore;
+
 use simd::rng_impl::*;
-use simd::{Sfc32Rng, SimdRng};
+use simd::{Sfc32Rng, SimdRng, SimdArray};
 
 /// The non-SIMD version of this same PRNG.
 pub type NonSimdRng = Sfc32Rng;
 
+
 macro_rules! make_sfc_32_simd {
-    ($rng_name:ident, $vector:ident, $next_u:ident, $test_name:ident) => (
+    ($rng_name:ident, $vector:ident, $next_u:ident, $test_name:ident, $rng_core_name:ident) => (
         /// A SIMD implementation of Chris Doty-Humphrey's Small Fast Counting RNG (32-bit)
         pub struct $rng_name {
             a: $vector,
@@ -22,6 +25,73 @@ macro_rules! make_sfc_32_simd {
         impl fmt::Debug for $rng_name {
             fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
                 write!(f, "$rng_name {{}}")
+            }
+        }
+
+        impl BlockRngCore for $rng_name {
+            type Item = u32;
+            type Results = SimdArray<$vector>;
+
+            #[inline(always)]
+            fn generate(&mut self, results: &mut Self::Results) {
+                #[inline]
+                fn rotate_left(x: $vector, n: u32) -> $vector {
+                    const BITS: u32 = 32;
+                    // Protect against undefined behaviour for over-long bit shifts
+                    let n = n % BITS;
+                    (x << n) | (x >> ((BITS - n) % BITS))
+                }
+
+                const BARREL_SHIFT: u32 = 21;
+                const RSHIFT: u32 = 9;
+                const LSHIFT: u32 = 3;
+
+                let tmp = self.a + self.b + self.counter;
+                self.counter += $vector::splat(1); // FIXME
+                self.a = self.b ^ (self.b >> RSHIFT);
+                self.b = self.c + (self.c << LSHIFT);
+                self.c = rotate_left(self.c, BARREL_SHIFT) + tmp;
+                *results = SimdArray(tmp);
+            }
+        }
+
+        impl RngCore for $rng_name {
+            #[inline(always)]
+            fn next_u32(&mut self) -> u32 {
+                let mut results = <$rng_name as BlockRngCore>::Results::default();
+                self.generate(&mut results);
+                results.as_ref()[0]
+            }
+
+            #[inline(always)]
+            fn next_u64(&mut self) -> u64 {
+                let mut results = <$rng_name as BlockRngCore>::Results::default();
+                self.generate(&mut results);
+                let x = u64::from(results.as_ref()[0]);
+                let y = u64::from(results.as_ref()[1]);
+                (y << 32) | x
+            }
+
+            #[inline(always)]
+            fn fill_bytes(&mut self, dest: &mut [u8]) {
+                let len = ::core::mem::size_of::<<$rng_name as BlockRngCore>::Results>(); // FIXME?
+                if dest.len() == len {
+                    let mut results = <$rng_name as BlockRngCore>::Results::default();
+                    self.generate(&mut results);
+                    unsafe {
+                        ::core::ptr::copy_nonoverlapping(
+                            results.as_ref().as_ptr() as *const u8,
+                            dest.as_mut_ptr(),
+                            len);
+                    }
+                    return;
+                }
+                unimplemented!()
+            }
+
+            fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Error> {
+                self.fill_bytes(dest);
+                Ok(())
             }
         }
 
@@ -138,6 +208,6 @@ macro_rules! make_sfc_32_simd {
     )
 }
 
-make_sfc_32_simd!(Sfc32X2, u32x2, next_u32x2, test_sfc_32_x2);
-make_sfc_32_simd!(Sfc32X4, u32x4, next_u32x4, test_sfc_32_x4);
-make_sfc_32_simd!(Sfc32X8, u32x8, next_u32x8, test_sfc_32_x8);
+make_sfc_32_simd!(Sfc32X2, u32x2, next_u32x2, test_sfc_32_x2, Sfc32X2Core);
+make_sfc_32_simd!(Sfc32X4, u32x4, next_u32x4, test_sfc_32_x4, Sfc32X4Core);
+make_sfc_32_simd!(Sfc32X8, u32x8, next_u32x8, test_sfc_32_x8, Sfc32X8Core);

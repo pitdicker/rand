@@ -17,17 +17,6 @@ pub trait SimdDistribution<T> {
 macro_rules! simd_float_impls {
     ($ty:ident, $uty:ident, $f_scalar:ty, $u_scalar:ty, $fraction_bits:expr, $exponent_bias:expr,
      $next_u:ident) => {
-        impl IntoFloat for $uty {
-            type F = $ty;
-            #[inline(always)]
-            fn into_float_with_exponent(self, exponent: i32) -> $ty {
-                // The exponent is encoded using an offset-binary representation
-                let exponent_bits: $u_scalar =
-                    (($exponent_bias + exponent) as $u_scalar) << $fraction_bits;
-                unsafe { mem::transmute(self | $uty::splat(exponent_bits)) }
-            }
-        }
-
         impl SimdDistribution<$ty> for Standard {
             /// Generate a floating point number in the open interval `(0, 1)`
             /// (not including either endpoint) with a uniform distribution.

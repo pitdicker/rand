@@ -1,4 +1,5 @@
 #![feature(test)]
+#![feature(stdsimd)]
 
 extern crate test;
 extern crate rand;
@@ -8,6 +9,7 @@ const BYTES_LEN: usize = 1024;
 
 use std::mem::size_of;
 use test::{black_box, Bencher};
+use std::simd::*;
 
 use rand::{RngCore, Rng, SeedableRng, NewRng};
 use rand::{StdRng, SmallRng, OsRng, EntropyRng, ReseedingRng};
@@ -15,6 +17,7 @@ use rand::prng::{XorShiftRng, Hc128Rng, IsaacRng, Isaac64Rng, ChaChaRng};
 use rand::prng::hc128::Hc128Core;
 use rand::jitter::JitterRng;
 use rand::thread_rng;
+use rand::simd::Sfc32X4;
 
 macro_rules! gen_bytes {
     ($fnn:ident, $gen:expr) => {
@@ -222,3 +225,20 @@ macro_rules! threadrng_uint {
 
 threadrng_uint!(thread_rng_u32, u32);
 threadrng_uint!(thread_rng_u64, u64);
+
+
+
+// Do not test JitterRng like the others by running it RAND_BENCH_N times per,
+// measurement, because it is way too slow. Only run it once.
+#[bench]
+fn gen_u32x4_sfc(b: &mut Bencher) {
+    let mut rng = Sfc32X4::new();
+    b.iter(|| {
+        let mut accum = u32x4::default();
+        for _ in 0..RAND_BENCH_N {
+            accum = accum + rng.gen::<u32x4>();
+        }
+        black_box(accum);
+    });
+    b.bytes = size_of::<u32x4>() as u64 * RAND_BENCH_N;
+}
