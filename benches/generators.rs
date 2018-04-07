@@ -1,4 +1,5 @@
 #![feature(test)]
+#![cfg_attr(all(feature="simd_support", feature="nightly"), feature(stdsimd))]
 
 extern crate test;
 extern crate rand;
@@ -8,13 +9,17 @@ const BYTES_LEN: usize = 1024;
 
 use std::mem::size_of;
 use test::{black_box, Bencher};
+#[cfg(feature="simd_support")]
+use std::simd::*;
 
 use rand::{RngCore, Rng, SeedableRng, NewRng};
 use rand::{StdRng, SmallRng, OsRng, EntropyRng, ReseedingRng};
-use rand::prng::{XorShiftRng, Hc128Rng, IsaacRng, Isaac64Rng, ChaChaRng};
+use rand::prng::{XorShiftRng, Hc128Rng, IsaacRng, Isaac64Rng, ChaChaRng, Sfc32Rng};
 use rand::prng::hc128::Hc128Core;
 use rand::jitter::JitterRng;
 use rand::thread_rng;
+#[cfg(feature="simd_support")]
+use rand::prng::Sfc32X4Rng;
 
 macro_rules! gen_bytes {
     ($fnn:ident, $gen:expr) => {
@@ -37,6 +42,7 @@ gen_bytes!(gen_bytes_xorshift, XorShiftRng::new());
 gen_bytes!(gen_bytes_hc128, Hc128Rng::new());
 gen_bytes!(gen_bytes_isaac, IsaacRng::new());
 gen_bytes!(gen_bytes_isaac64, Isaac64Rng::new());
+gen_bytes!(gen_bytes_sfc32, Sfc32Rng::new());
 gen_bytes!(gen_bytes_std, StdRng::new());
 gen_bytes!(gen_bytes_small, SmallRng::new());
 gen_bytes!(gen_bytes_os, OsRng::new().unwrap());
@@ -62,6 +68,8 @@ gen_uint!(gen_u32_xorshift, u32, XorShiftRng::new());
 gen_uint!(gen_u32_hc128, u32, Hc128Rng::new());
 gen_uint!(gen_u32_isaac, u32, IsaacRng::new());
 gen_uint!(gen_u32_isaac64, u32, Isaac64Rng::new());
+gen_uint!(gen_u32_sfc32, u32, Sfc32Rng::new());
+#[cfg(feature="simd_support")] gen_uint!(gen_u32_sfc32x4, u32, Sfc32X4Rng::new());
 gen_uint!(gen_u32_std, u32, StdRng::new());
 gen_uint!(gen_u32_small, u32, SmallRng::new());
 gen_uint!(gen_u32_os, u32, OsRng::new().unwrap());
@@ -70,6 +78,8 @@ gen_uint!(gen_u64_xorshift, u64, XorShiftRng::new());
 gen_uint!(gen_u64_hc128, u64, Hc128Rng::new());
 gen_uint!(gen_u64_isaac, u64, IsaacRng::new());
 gen_uint!(gen_u64_isaac64, u64, Isaac64Rng::new());
+gen_uint!(gen_u64_sfc32, u64, Sfc32Rng::new());
+#[cfg(feature="simd_support")] gen_uint!(gen_u64_sfc32x4, u64, Sfc32X4Rng::new());
 gen_uint!(gen_u64_std, u64, StdRng::new());
 gen_uint!(gen_u64_small, u64, SmallRng::new());
 gen_uint!(gen_u64_os, u64, OsRng::new().unwrap());
@@ -222,3 +232,33 @@ macro_rules! threadrng_uint {
 
 threadrng_uint!(thread_rng_u32, u32);
 threadrng_uint!(thread_rng_u64, u64);
+
+
+
+#[cfg(feature="simd_support")]
+#[bench]
+fn gen_u32x4_sfc(b: &mut Bencher) {
+    let mut rng = Sfc32X4Rng::new();
+    b.iter(|| {
+        let mut accum = u32x4::default();
+        for _ in 0..RAND_BENCH_N {
+            accum |= rng.gen::<u32x4>();
+        }
+        black_box(accum);
+    });
+    b.bytes = size_of::<u32x4>() as u64 * RAND_BENCH_N;
+}
+
+#[cfg(feature="simd_support")]
+#[bench]
+fn gen_f32x4_sfc(b: &mut Bencher) {
+    let mut rng = Sfc32X4Rng::new();
+    b.iter(|| {
+        let mut accum = f32x4::default();
+        for _ in 0..RAND_BENCH_N {
+            accum += rng.gen::<f32x4>();
+        }
+        black_box(accum);
+    });
+    b.bytes = size_of::<f32x4>() as u64 * RAND_BENCH_N;
+}

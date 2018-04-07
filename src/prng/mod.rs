@@ -44,12 +44,17 @@ pub mod chacha;
 pub mod hc128;
 pub mod isaac;
 pub mod isaac64;
+mod sfc32;
 mod xorshift;
 
 mod isaac_array;
+#[cfg(feature="simd_support")] mod simd_array;
 
 pub use self::chacha::ChaChaRng;
 pub use self::hc128::Hc128Rng;
 pub use self::isaac::IsaacRng;
 pub use self::isaac64::Isaac64Rng;
+pub use self::sfc32::Sfc32Rng;
+#[cfg(feature="simd_support")]
+pub use self::sfc32::{Sfc32X2Rng, Sfc32X4Rng, Sfc32X8Rng};
 pub use self::xorshift::XorShiftRng;
