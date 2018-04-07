@@ -13,6 +13,8 @@
 use core::mem;
 use Rng;
 use distributions::{Distribution, Standard};
+#[cfg(feature="simd_support")]
+use core::simd::*;
 
 pub(crate) trait IntoFloat {
     type F;
@@ -29,8 +31,7 @@ pub(crate) trait IntoFloat {
 }
 
 macro_rules! float_impls {
-    ($ty:ty, $uty:ty, $fraction_bits:expr, $exponent_bias:expr,
-     $next_u:ident) => {
+    ($ty:ty, $uty:ty, $fraction_bits:expr, $exponent_bias:expr) => {
         impl IntoFloat for $uty {
             type F = $ty;
             #[inline(always)]
@@ -49,15 +50,62 @@ macro_rules! float_impls {
                 const EPSILON: $ty = 1.0 / (1u64 << $fraction_bits) as $ty;
                 let float_size = mem::size_of::<$ty>() * 8;
 
-                let value = rng.$next_u();
+                let value: $uty = rng.gen();
                 let fraction = value >> (float_size - $fraction_bits);
                 fraction.into_float_with_exponent(0) - (1.0 - EPSILON / 2.0)
             }
         }
     }
 }
-float_impls! { f32, u32, 23, 127, next_u32 }
-float_impls! { f64, u64, 52, 1023, next_u64 }
+float_impls! { f32, u32, 23, 127 }
+float_impls! { f64, u64, 52, 1023 }
+
+
+#[cfg(feature="simd_support")]
+macro_rules! simd_float_impls {
+    ($ty:ident, $uty:ident, $f_scalar:ty, $u_scalar:ty,
+     $fraction_bits:expr, $exponent_bias:expr) => {
+        impl IntoFloat for $uty {
+            type F = $ty;
+            #[inline(always)]
+            fn into_float_with_exponent(self, exponent: i32) -> $ty {
+                // The exponent is encoded using an offset-binary representation
+                let exponent_bits: $u_scalar =
+                    (($exponent_bias + exponent) as $u_scalar) << $fraction_bits;
+                unsafe { mem::transmute(self | $uty::splat(exponent_bits)) }
+            }
+        }
+
+        impl Distribution<$ty> for Standard {
+            /// Generate a floating point number in the open interval `(0, 1)`
+            /// (not including either endpoint) with a uniform distribution.
+            fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> $ty {
+                const EPSILON: $f_scalar = 1.0 / (1u64 << $fraction_bits) as $f_scalar;
+                let float_size = mem::size_of::<$f_scalar>() * 8;
+
+                let value: $uty = rng.gen();
+                let fraction = value >> (float_size - $fraction_bits);
+                fraction.into_float_with_exponent(0) - $ty::splat(1.0 - EPSILON / 2.0)
+            }
+        }
+    }
+}
+
+#[cfg(feature="simd_support")]
+simd_float_impls! { f32x2, u32x2, f32, u32, 23, 127 }
+#[cfg(feature="simd_support")]
+simd_float_impls! { f32x4, u32x4, f32, u32, 23, 127 }
+#[cfg(feature="simd_support")]
+simd_float_impls! { f32x8, u32x8, f32, u32, 23, 127 }
+#[cfg(feature="simd_support")]
+simd_float_impls! { f32x16, u32x16, f32, u32, 23, 127 }
+
+#[cfg(feature="simd_support")]
+simd_float_impls! { f64x2, u64x2, f64, u64, 52, 1023 }
+#[cfg(feature="simd_support")]
+simd_float_impls! { f64x4, u64x4, f64, u64, 52, 1023 }
+#[cfg(feature="simd_support")]
+simd_float_impls! { f64x8, u64x8, f64, u64, 52, 1023 }
 
 
 #[cfg(test)]
