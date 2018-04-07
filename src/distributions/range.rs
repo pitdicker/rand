@@ -14,6 +14,9 @@ use Rng;
 use distributions::Distribution;
 use distributions::float::IntoFloat;
 
+#[cfg(feature="simd_support")]
+use core::simd::*;
+
 /// Sample values uniformly between two bounds.
 ///
 /// `Range::new` and `Range::new_inclusive` will set up a `Range`, which does
@@ -427,7 +430,7 @@ pub struct RangeFloat<X> {
 }
 
 macro_rules! range_float_impl {
-    ($ty:ty, $bits_to_discard:expr, $next_u:ident) => {
+    ($ty:ty, $uty:ident, $bits_to_discard:expr) => {
         impl SampleRange for $ty {
             type Impl = RangeFloat<$ty>;
         }
@@ -452,8 +455,8 @@ macro_rules! range_float_impl {
 
             fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> Self::X {
                 // Generate a value in the range [1, 2)
-                let value1_2 = (rng.$next_u() >> $bits_to_discard)
-                               .into_float_with_exponent(0);
+                let value: $uty = rng.gen::<$uty>() >> $bits_to_discard;
+                let value1_2 = value.into_float_with_exponent(0);
                 // Doing multiply before addition allows some architectures to
                 // use a single instruction.
                 value1_2 * self.scale + self.offset
@@ -462,8 +465,24 @@ macro_rules! range_float_impl {
     }
 }
 
-range_float_impl! { f32, 32 - 23, next_u32 }
-range_float_impl! { f64, 64 - 52, next_u64 }
+range_float_impl! { f32, u32, 32 - 23 }
+range_float_impl! { f64, u64, 64 - 52 }
+
+#[cfg(feature="simd_support")]
+range_float_impl! { f32x2, u32x2, 32 - 23 }
+#[cfg(feature="simd_support")]
+range_float_impl! { f32x4, u32x4, 32 - 23 }
+#[cfg(feature="simd_support")]
+range_float_impl! { f32x8, u32x8, 32 - 23 }
+#[cfg(feature="simd_support")]
+range_float_impl! { f32x16, u32x16, 32 - 23 }
+
+#[cfg(feature="simd_support")]
+range_float_impl! { f64x2, u64x2, 64 - 52 }
+#[cfg(feature="simd_support")]
+range_float_impl! { f64x4, u64x4, 64 - 52 }
+#[cfg(feature="simd_support")]
+range_float_impl! { f64x8, u64x8, 64 - 52 }
 
 
 #[cfg(test)]
