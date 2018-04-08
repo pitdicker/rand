@@ -19,7 +19,7 @@ use rand::prng::hc128::Hc128Core;
 use rand::jitter::JitterRng;
 use rand::thread_rng;
 #[cfg(feature="simd_support")]
-use rand::prng::Sfc32X4Rng;
+use rand::prng::{Sfc32X4Rng, Sfc32X8Rng};
 
 macro_rules! gen_bytes {
     ($fnn:ident, $gen:expr) => {
@@ -247,6 +247,20 @@ fn gen_u32x4_sfc(b: &mut Bencher) {
         black_box(accum);
     });
     b.bytes = size_of::<u32x4>() as u64 * RAND_BENCH_N;
+}
+
+#[cfg(feature="simd_support")]
+#[bench]
+fn gen_u32x8_sfc(b: &mut Bencher) {
+    let mut rng = Sfc32X8Rng::new();
+    b.iter(|| {
+        let mut accum = u32x8::default();
+        for _ in 0..RAND_BENCH_N {
+            accum += rng.gen::<u32x8>();
+        }
+        black_box(accum);
+    });
+    b.bytes = size_of::<u32x8>() as u64 * RAND_BENCH_N;
 }
 
 #[cfg(feature="simd_support")]

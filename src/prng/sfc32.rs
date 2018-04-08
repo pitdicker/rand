@@ -14,9 +14,7 @@ use core::{fmt, slice};
 #[cfg(feature="simd_support")]
 use core::simd::*;
 
-use rand_core::{BlockRngCore, RngCore, SeedableRng, Error, impls, le};
-#[cfg(feature="simd_support")]
-use prng::simd_array::SimdArray;
+use rand_core::{RngCore, SeedableRng, Error, impls, le};
 
 /// A Small Fast Counting RNG designed by Chris Doty-Humphrey (32-bit version).
 ///
@@ -107,7 +105,7 @@ impl RngCore for Sfc32Rng {
 
 #[cfg(feature="simd_support")]
 macro_rules! make_sfc_32_simd {
-    ($rng_name:ident, $vector:ident, $test_name:ident, $rng_core_name:ident, $debug_str:expr) => (
+    ($rng_name:ident, $vector:ident, $test_name:ident, $debug_str:expr, $vector32:ident, $vector8:ident) => (
         /// A SIMD implementation of Chris Doty-Humphrey's Small Fast Counting RNG (32-bit)
         pub struct $rng_name {
             a: $vector,
@@ -123,65 +121,44 @@ macro_rules! make_sfc_32_simd {
             }
         }
 
-        impl BlockRngCore for $rng_name {
-            type Item = u32;
-            type Results = SimdArray<$vector>;
-
-            #[inline(always)]
-            fn generate(&mut self, results: &mut Self::Results) {
-                #[inline]
-                fn rotate_left(x: $vector, n: u32) -> $vector {
-                    const BITS: u32 = 32;
-                    // Protect against undefined behaviour for over-long bit shifts
-                    let n = n % BITS;
-                    (x << n) | (x >> ((BITS - n) % BITS))
-                }
-
-                const BARREL_SHIFT: u32 = 21;
-                const RSHIFT: u32 = 9;
-                const LSHIFT: u32 = 3;
-
-                let tmp = self.a + self.b + self.counter;
-                self.counter += $vector::splat(1);
-                self.a = self.b ^ (self.b >> RSHIFT);
-                self.b = self.c + (self.c << LSHIFT);
-                self.c = rotate_left(self.c, BARREL_SHIFT) + tmp;
-                *results = SimdArray::from(tmp);
-            }
-        }
-
         impl RngCore for $rng_name {
             #[inline(always)]
             fn next_u32(&mut self) -> u32 {
-                let mut results = <$rng_name as BlockRngCore>::Results::default();
-                self.generate(&mut results);
-                results.as_ref()[0]
+                let results = $vector32::from_bits(self.generate());
+                results.extract(0)
             }
 
             #[inline(always)]
             fn next_u64(&mut self) -> u64 {
-                let mut results = <$rng_name as BlockRngCore>::Results::default();
-                self.generate(&mut results);
-                let x = u64::from(results.as_ref()[0]);
-                let y = u64::from(results.as_ref()[1]);
+                let results = $vector32::from_bits(self.generate());
+                let x = u64::from(results.extract(0));
+                let y = u64::from(results.extract(1));
                 (y << 32) | x
             }
 
             #[inline(always)]
             fn fill_bytes(&mut self, dest: &mut [u8]) {
-                let len = ::core::mem::size_of::<<$rng_name as BlockRngCore>::Results>();
-                if dest.len() == len {
-                    let mut results = <$rng_name as BlockRngCore>::Results::default();
-                    self.generate(&mut results);
-                    unsafe {
-                        ::core::ptr::copy_nonoverlapping(
-                            results.as_ref().as_ptr() as *const u8,
-                            dest.as_mut_ptr(),
-                            len);
+                // Forced inlining will keep the result in SIMD registers if
+                // the code using it also uses it in a SIMD context.
+                let chunk_size = ::core::mem::size_of::<$vector>();
+                let remainder = dest.len() % chunk_size;
+                let len = dest.len() - remainder;
+                let mut read_len = 0;
+                let mut results;
+                loop {
+                    results = $vector8::from_bits(self.generate());
+                    if read_len < len {
+                        results.store_unaligned(&mut dest[read_len..]);
+                        read_len += chunk_size;
                     }
-                    return;
+                    if read_len == len { break; }
                 }
-                unimplemented!() // FIXME
+                if remainder > 0 {
+                    // TODO: this part can probably be done better
+                    for i in 0..remainder {
+                        dest[read_len+i] = results.extract(i);
+                    }
+                }
             }
 
             fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Error> {
@@ -213,6 +190,28 @@ macro_rules! make_sfc_32_simd {
 
                 Self::from_vector(a, b, c)
             }
+
+            #[inline(always)]
+            fn generate(&mut self) -> $vector {
+                #[inline]
+                fn rotate_left(x: $vector, n: u32) -> $vector {
+                    const BITS: u32 = 32;
+                    // Protect against undefined behaviour for over-long bit shifts
+                    let n = n % BITS;
+                    (x << n) | (x >> ((BITS - n) % BITS))
+                }
+
+                const BARREL_SHIFT: u32 = 21;
+                const RSHIFT: u32 = 9;
+                const LSHIFT: u32 = 3;
+
+                let tmp = self.a + self.b + self.counter;
+                self.counter += $vector::splat(1);
+                self.a = self.b ^ (self.b >> RSHIFT);
+                self.b = self.c + (self.c << LSHIFT);
+                self.c = rotate_left(self.c, BARREL_SHIFT) + tmp;
+                tmp
+            }
         }
 
         impl SeedableRng for $rng_name {
@@ -237,8 +236,8 @@ macro_rules! make_sfc_32_simd {
 
                 Ok(Self::from_vector(
                     load(&seed_u32[..lanes]),
-                    load(&seed_u32[lanes..2 * lanes]),
-                    load(&seed_u32[lanes * 2..]),
+                    load(&seed_u32[lanes..(2*lanes)]),
+                    load(&seed_u32[(lanes*2)..]),
                 ))
             }
         }
@@ -279,8 +278,8 @@ macro_rules! make_sfc_32_simd {
 }
 
 #[cfg(feature="simd_support")]
-make_sfc_32_simd!(Sfc32X2Rng, u32x2, test_sfc_32_x2, Sfc32X2Core, "Sfc32X2Rng {{}}");
+make_sfc_32_simd!(Sfc32X2Rng, u32x2, test_sfc_32_x2, "Sfc32X2Rng {{}}", u32x2, u8x8);
 #[cfg(feature="simd_support")]
-make_sfc_32_simd!(Sfc32X4Rng, u32x4, test_sfc_32_x4, Sfc32X4Core, "Sfc32X4Rng {{}}");
+make_sfc_32_simd!(Sfc32X4Rng, u32x4, test_sfc_32_x4, "Sfc32X4Rng {{}}", u32x4, u8x16);
 #[cfg(feature="simd_support")]
-make_sfc_32_simd!(Sfc32X8Rng, u32x8, test_sfc_32_x8, Sfc32X8Core, "Sfc32X8Rng {{}}");
+make_sfc_32_simd!(Sfc32X8Rng, u32x8, test_sfc_32_x8, "Sfc32X8Rng {{}}", u32x8, u8x32);

@@ -48,7 +48,6 @@ mod sfc32;
 mod xorshift;
 
 mod isaac_array;
-#[cfg(feature="simd_support")] mod simd_array;
 
 pub use self::chacha::ChaChaRng;
 pub use self::hc128::Hc128Rng;
