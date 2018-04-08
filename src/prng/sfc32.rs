@@ -52,9 +52,11 @@ impl SeedableRng for Sfc32Rng {
                                c: seed_u32[2],
                                counter: 1};
         // Skip the first 15 outputs, just in case we have a bad seed.
+/* We are allowed to assume the seed is good. Possibly use this in `from_seed_u64`
         for _ in 0..15 {
             state.next_u32();
         }
+*/
         state
     }
 
@@ -146,6 +148,8 @@ macro_rules! make_sfc_32_simd {
                 let mut read_len = 0;
                 let mut results;
                 loop {
+                    // FIXME: on big-endian we should do byte swapping around
+                    // here.
                     results = $vector8::from_bits(self.generate());
                     if read_len < len {
                         results.store_unaligned(&mut dest[read_len..]);

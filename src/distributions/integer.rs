@@ -125,6 +125,7 @@ macro_rules! simd_impl {
                     let ptr = &mut vec;
                     let b_ptr = &mut *(ptr as *mut $ty as *mut [u8; $bits/8]);
                     rng.fill_bytes(b_ptr);
+                    // FIXME: on big-endian we should do byte swapping here.
                 }
                 vec
             }
