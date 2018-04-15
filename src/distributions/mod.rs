@@ -24,6 +24,10 @@
 //! [`Standard`]: struct.Standard.html
 
 use Rng;
+#[cfg(feature = "rayon")]
+use SeedableRng;
+#[cfg(feature = "rayon")]
+use distributions::rayon::ParallelDistIter;
 
 pub use self::other::Alphanumeric;
 pub use self::uniform::Uniform;
@@ -51,6 +55,8 @@ pub mod exponential;
 pub mod poisson;
 #[cfg(feature = "std")]
 pub mod binomial;
+#[cfg(feature = "rayon")]
+mod rayon;
 
 mod float;
 mod integer;
@@ -186,6 +192,16 @@ pub trait Distribution<T> {
             rng: rng,
             phantom: ::core::marker::PhantomData,
         }
+    }
+
+    /// Create a parallel iterator.
+    #[cfg(feature = "rayon")]
+    fn sample_par_iter<'a, R>(&'a self, rng: &mut R, amount: usize)
+        -> ParallelDistIter<'a, Self, R, T>
+        where Self: Sized,
+              R: Rng + SeedableRng,
+    {
+        ParallelDistIter::new(self, rng, amount)
     }
 }
 
@@ -645,5 +661,20 @@ mod tests {
         let distr = Normal::new(10.0, 10.0);
         let results: Vec<_> = distr.sample_iter(&mut rng).take(100).collect();
         println!("{:?}", results);
+    }
+
+    #[cfg(all(feature="std", feature="rayon"))]
+    #[test]
+    fn test_distributions_par_iter() {
+        use SeedableRng;
+        use distributions::Range;
+        use rayon::iter::ParallelIterator;
+        use prng::XorShiftRng; // *EXTREMELY* bad choice!
+
+        let mut rng = XorShiftRng::from_seed([1,2,3,4, 5,6,7,8, 9,10,11,12, 13,14,15,16]);
+        let range = Range::new(100, 200);
+        let results: Vec<_> = range.sample_par_iter(&mut rng, 1000).collect();
+        println!("{:?}", results);
+        panic!();
     }
 }
