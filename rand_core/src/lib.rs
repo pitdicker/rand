@@ -384,6 +384,63 @@ pub trait SeedableRng: Sized {
         rng.try_fill_bytes(seed.as_mut())?;
         Ok(Self::from_seed(seed))
     }
+
+/*
+For a function that splits off one RNG from another it is possible to imagine two variants:
+- sequential: split off RNGs one by one from a master RNG
+- recursive: split one RNG in two, split the sub-RNGs again in two, etc.
+
+Recursively splitting has the advantage that it works well in parallel code, and is usable, although less ergonomic, in sequential code.
+`split_from` is intended to be used recursively.
+
+Example:
+```
+let rng1 = XorShiftRng::new();
+      let rng2 = rng1.split(2);
+    let rng3 = rng1.split(1);
+      let rng4 = rng3.split(2);
+  let rng5 = rng1.split(0);
+      let rng6 = rng5.split(2);
+    let rng7 = rng3.split(1);
+      let rng8 = rng7.split(2);
+```
+
+// PRNG supporting streams:
+pub trait SeedableRng: Sized {
+    /* ... */
+
+    fn split(&mut self, split_level: u8) -> Self {
+        let mut new = self.clone();
+        // XOR the stream with bit nr `split_level`.
+        new.stream ^= (1 << split_level); // shift by one more if `stream` must be odd
+        new
+    }
+}
+
+// PRNG supporting jumps:
+pub trait SeedableRng: Sized {
+    /* ... */
+
+    fn split(&mut self, split_level: u8) -> Self {
+        let mut new = self.clone();
+        // Jump by smaller amounts if we are at a deeper `split_level`.
+        new.jump(PERIOD / (2 << split_level));
+        new
+    }
+}
+*/
+    fn split(&mut self, split_level: u8) -> Self
+         where Self: RngCore
+    {
+        // Seed a new RNG from the parent RNG.
+        let mut seed = Self::Seed::default();
+        self.fill_bytes(seed.as_mut());
+        // Adding `split_level` to the state may improve things a bit for
+        // primitive RNGs like Xorshift. FIXME: check
+        let tmp = seed.as_mut()[0];
+        seed.as_mut()[0] = tmp.wrapping_add(split_level + 1);
+        Self::from_seed(seed)
+    }
 }
 
 // Implement `RngCore` for references to an `RngCore`.

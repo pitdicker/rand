@@ -89,6 +89,7 @@ impl<'a, D, R, T> IndexedParallelIterator for ParallelDistIter<'a, D, R, T>
                 distr: self.distr.clone(),
                 amount: self.amount,
                 rng: self.rng,
+                split_level: 0,
                 phantom: ::core::marker::PhantomData,
             }
         )
@@ -101,6 +102,7 @@ pub struct DistProducer<'a, D: 'a, R, T> {
     distr: &'a D,
     rng: R,
     amount: usize,
+    split_level: u8,
     phantom: ::core::marker::PhantomData<T>,
 }
 
@@ -109,17 +111,7 @@ pub struct DistProducer<'a, D: 'a, R, T> {
 /// is not optimal.
 ///
 /// Every time `rayon` splits the work in two to create parallel tasks, one new
-/// PRNG is created. The original PRNG is used to seed the new one using
-/// `SeedableRng::from_rng`. **Important**: Not all RNG algorithms support this!
-/// Notably the low-quality plain Xorshift, the current default for `SmallRng`,
-/// will simply clone itself using this method instead of seeding the split off
-/// RNG well. Consider using something like PCG or Xoroshiro128+.
-///
-/// It is hard to predict what will happen to the statistical quality of PRNGs
-/// when they are split off many times, and only very short runs are used. We
-/// limit the minimum number of items that should be used of the PRNG to at
-/// least 100 to hopefully keep similar statistical properties as one PRNG used
-/// continuously.
+/// PRNG is created.
 impl<'a, D, R, T> Producer for DistProducer<'a, D, R, T>
     where D: Distribution<T> + Send + Sync,
           R: Rng + SeedableRng + Send,
@@ -137,19 +129,19 @@ impl<'a, D, R, T> Producer for DistProducer<'a, D, R, T>
     }
 
     fn split_at(mut self, index: usize) -> (Self, Self) {
-        assert!(index <= self.amount);
-        // Create a new PRNG of the same type, by seeding it with this PRNG.
-        // `from_rng` should never fail.
         let new = DistProducer {
             distr: self.distr,
             amount: self.amount - index,
-            rng: R::from_rng(&mut self.rng).unwrap(),
+            rng: R::split(&mut self.rng, self.split_level),
+            split_level: self.split_level + 1,
             phantom: ::core::marker::PhantomData,
         };
         self.amount = index;
+        self.split_level += 1;
         (self, new)
     }
 
+    // FIXME: should we keep this?
     fn min_len(&self) -> usize {
         100
     }

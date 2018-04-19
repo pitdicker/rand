@@ -127,6 +127,24 @@ impl SeedableRng for XorShiftRng {
             w: w(seed_u32[3]),
         })
     }
+
+    fn split(&mut self, split_level: u8) -> Self
+         where Self: RngCore
+    {
+        // Seed a new RNG from the parent RNG.
+        let mut seed = Self::Seed::default();
+        self.fill_bytes(seed.as_mut());
+        // Adding `split_level` to the state may improve things a bit for
+        // primitive RNGs like Xorshift.
+        let tmp = seed.as_mut()[0];
+        seed.as_mut()[0] = tmp.wrapping_add(split_level + 1);
+        let mut new = Self::from_seed(seed);
+
+        // emulate an expensive jump operation
+        // FIXME: implement actual jumping :-)
+        for _ in 0..150 { let _ = new.next_u32(); }
+        new
+    }
 }
 
 #[cfg(test)]
