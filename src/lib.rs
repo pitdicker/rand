@@ -244,10 +244,13 @@ mod reseeding;
 
 
 // Normal imports just for this file
-use core::{marker, mem, slice};
+use core::{marker, mem, slice, fmt};
+use core::fmt::Debug;
 use distributions::{Distribution, Standard, Uniform};
 use distributions::uniform::SampleUniform;
 use prng::hc128::Hc128Rng;
+#[cfg(feature = "rayon")]
+use rayon::iter::IntoParallelIterator;
 
 
 /// A type that can be randomly generated using an [`Rng`].
@@ -614,7 +617,89 @@ pub trait Rng: RngCore {
     fn gen_ascii_chars(&mut self) -> AsciiGenerator<&mut Self> {
         AsciiGenerator { rng: self }
     }
+
+    /// Create a parallel iterator.
+    #[cfg(feature = "rayon")]
+    fn par_iter_map<F, B>(&mut self, map_op: F) -> ParallelRngMap<Self, F>
+        where Self: SeedableRng + Sized,
+              F: Fn(Self) -> B + Sync + Send,
+              B: Send,
+    {
+        new_iter_map(self, map_op)
+    }
 }
+
+/// FIXME: description
+pub struct ParallelRngMap<R, F> {
+    rng: R,
+    map_op: F,
+}
+
+impl<R: Rng + Debug, F> Debug for ParallelRngMap<R, F> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("ParallelRngMap")
+            .field("rng", &self.rng)
+            .finish()
+    }
+}
+
+/// Create a new `ParallelRngMap` iterator.
+///
+/// NB: a free fn because it is NOT part of the end-user API.
+pub fn new_iter_map<R, F>(rng: &mut R, map_op: F) -> ParallelRngMap<R, F>
+    where R: Rng + SeedableRng,
+{
+    ParallelRngMap {
+        rng: R::from_rng(rng).unwrap(), // FIXME: initial split?
+        map_op,
+    }
+}
+
+use rayon::iter::plumbing::{Consumer, Folder, Producer, ProducerCallback, UnindexedConsumer, UnindexedProducer, bridge, bridge_unindexed};
+use rayon::iter::{IndexedParallelIterator, ParallelIterator, Zip};
+
+impl<R, F, B> ParallelIterator for ParallelRngMap<R, F>
+    where R: Rng + SeedableRng + Send,
+          F: Fn(R) -> B + Sync + Send,
+          B: Send
+{
+    type Item = B;
+
+    fn drive_unindexed<C>(self, consumer: C) -> C::Result
+        where C: UnindexedConsumer<Self::Item>
+    {
+        bridge_unindexed(self, consumer)
+    }
+
+    fn opt_len(&self) -> Option<usize> { None }
+}
+
+impl<R, F, B> UnindexedProducer for ParallelRngMap<R, F>
+    where R: Rng + SeedableRng + Send,
+          F: Fn(R) -> B + Sync + Send,
+          B: Send
+{
+    type Item = B;
+
+    fn split(mut self) -> (Self, Option<Self>) {
+        // Create a new RNG of the same type, by seeding it with this RNG.
+        let new = ParallelRngMap {
+            map_op: self.map_op,
+            rng: R::from_rng(&mut self.rng).unwrap(),
+        };
+        (self, Some(new))
+    }
+
+    fn fold_with<G>(mut self, folder: G) -> G
+        where G: Folder<Self::Item>
+    {
+        folder.consume((self.map_op)(self.rng))
+    }
+}
+
+
+
+
 
 impl<R: RngCore + ?Sized> Rng for R {}
 
