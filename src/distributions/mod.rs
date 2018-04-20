@@ -242,6 +242,9 @@ impl<'a, D, R, T> Iterator for DistIter<'a, D, R, T>
     }
 }
 
+impl<'a, D, R, T> FusedIterator for DistIter<'a, D, R, T>
+    where D: Distribution<T>, R: Rng + 'a {}
+
 
 /// A generic random value distribution. Generates values for various types
 /// with numerically uniform distribution.
