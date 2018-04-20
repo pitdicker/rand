@@ -29,6 +29,8 @@ use SeedableRng;
 #[cfg(feature = "rayon")]
 use distributions::rayon::ParallelDistIter;
 
+use core::iter::FusedIterator;
+
 pub use self::other::Alphanumeric;
 pub use self::uniform::Uniform;
 #[deprecated(since="0.5.0", note="use Uniform instead")]
@@ -196,12 +198,12 @@ pub trait Distribution<T> {
 
     /// Create a parallel iterator.
     #[cfg(feature = "rayon")]
-    fn sample_par_iter<'a, R>(&'a self, rng: &mut R, amount: usize)
+    fn sample_par_iter<'a, R>(&'a self, rng: &mut R)
         -> ParallelDistIter<'a, Self, R, T>
         where Self: Sized,
               R: Rng + SeedableRng,
     {
-        ParallelDistIter::new(self, rng, amount)
+        ParallelDistIter::new(self, rng)
     }
 }
 
@@ -676,7 +678,7 @@ mod tests {
 
         let mut rng = XorShiftRng::from_seed([1,2,3,4, 5,6,7,8, 9,10,11,12, 13,14,15,16]);
         let range = Range::new(100, 200);
-        let results: Vec<_> = range.sample_par_iter(&mut rng, 1000).collect();
+        let results: Vec<_> = range.sample_par_iter(&mut rng).take(1000).collect();
         println!("{:?}", results);
         panic!();
     }

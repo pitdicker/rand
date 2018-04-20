@@ -13,8 +13,11 @@
 use {Rng, SeedableRng};
 use distributions::Distribution;
 
-use rayon::iter::plumbing::{Consumer, Producer, ProducerCallback, UnindexedConsumer, bridge};
-use rayon::iter::{ParallelIterator, IndexedParallelIterator};
+use core::iter::FusedIterator;
+
+use rayon::iter::plumbing::{Consumer, Folder, Producer, ProducerCallback, UnindexedConsumer, UnindexedProducer, bridge, bridge_unindexed};
+use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator, Zip};
+
 
 
 /// An iterator that generates random values of `T` with distribution `D`,
@@ -29,26 +32,128 @@ use rayon::iter::{ParallelIterator, IndexedParallelIterator};
 pub struct ParallelDistIter<'a, D: 'a, R, T> {
     distr: &'a D,
     rng: R,
-    amount: usize,
     phantom: ::core::marker::PhantomData<T>,
 }
 
 impl<'a, D, R, T> ParallelDistIter<'a, D, R, T> {
-    pub fn new(distr: &'a D, rng: &mut R, amount: usize)
-        -> ParallelDistIter<'a, D, R, T>
+    /// FIXME: just put the stuct one module up?
+    pub fn new(distr: &'a D, rng: &mut R) -> ParallelDistIter<'a, D, R, T>
         where D: Distribution<T>,
               R: Rng + SeedableRng,
     {
         ParallelDistIter {
             distr,
-            rng: R::from_rng(rng).unwrap(),
+            rng: R::from_rng(rng).unwrap(), // FIXME: initial split?
+            phantom: ::core::marker::PhantomData,
+        }
+    }
+
+    /// Take only `n` repeats of the element, similar to the general
+    /// [`take()`](trait.IndexedParallelIterator.html#method.take).
+    ///
+    /// The resulting `RepeatN` is an `IndexedParallelIterator`, allowing
+    /// more functionality than `Repeat` alone.
+    pub fn take(self, n: usize) -> ParallelDistIterN<'a, D, R, T> {
+        ParallelDistIterN {
+            distr: self.distr,
+            rng: self.rng,
+            amount: n,
+            phantom: ::core::marker::PhantomData,
+        }
+    }
+
+    /// Iterate tuples repeating the element with items from another
+    /// iterator, similar to the general
+    /// [`zip()`](trait.IndexedParallelIterator.html#method.zip).
+    pub fn zip<Z>(self, zip_op: Z)
+        -> Zip<ParallelDistIterN<'a, D, R, T>, Z::Iter>
+        where D: Distribution<T> + Send + Sync,
+              R: Rng + SeedableRng + Send,
+              T: Send,
+              Z: IntoParallelIterator,
+              Z::Iter: IndexedParallelIterator
+    {
+        let z = zip_op.into_par_iter();
+        let n = z.len();
+        self.take(n).zip(z)
+    }
+}
+
+impl<'a, D, R, T> ParallelIterator for ParallelDistIter<'a, D, R, T>
+    where D: Distribution<T> + Send + Sync,
+          R: Rng + SeedableRng + Send,
+          T: Send,
+{
+    type Item = T;
+
+    fn drive_unindexed<C>(self, consumer: C) -> C::Result
+        where C: UnindexedConsumer<Self::Item>
+    {
+        bridge_unindexed(self, consumer)
+    }
+
+    fn opt_len(&self) -> Option<usize> { None }
+}
+
+impl<'a, D, R, T> UnindexedProducer for ParallelDistIter<'a, D, R, T>
+    where D: Distribution<T> + Send + Sync,
+          R: Rng + SeedableRng + Send,
+          T: Send,
+{
+    type Item = T;
+
+    fn split(mut self) -> (Self, Option<Self>) {
+        // Create a new RNG of the same type, by seeding it with this RNG.
+        // Returns `(Self, None)` if seeding failed.
+        let new = R::from_rng(&mut self.rng).ok().map(|rng| {
+            ParallelDistIter {
+                distr: self.distr.clone(),
+                phantom: ::core::marker::PhantomData,
+                rng,
+            }});
+        (self, new)
+    }
+
+    fn fold_with<F>(mut self, folder: F) -> F
+        where F: Folder<Self::Item>
+    {
+        folder.consume(self.distr.sample(&mut self.rng))
+    }
+}
+
+
+/// An iterator that generates random values of `T` with distribution `D`,
+/// using `R` as the source of randomness.
+///
+/// This `struct` is created by the [`par_sample_iter`] method on
+/// [`Distribution`]. See its documentation for more.
+///
+/// [`Distribution`]: trait.Distribution.html
+/// [`sample_iter`]: trait.Distribution.html#method.sample_iter
+#[derive(Debug)]
+pub struct ParallelDistIterN<'a, D: 'a, R, T> {
+    distr: &'a D,
+    rng: R,
+    amount: usize,
+    phantom: ::core::marker::PhantomData<T>,
+}
+
+impl<'a, D, R, T> ParallelDistIterN<'a, D, R, T> {
+    pub fn new(distr: &'a D, rng: &mut R, amount: usize)
+        -> ParallelDistIterN<'a, D, R, T>
+        where D: Distribution<T>,
+              R: Rng + SeedableRng,
+    {
+        ParallelDistIterN {
+            distr,
+            rng: R::from_rng(rng).unwrap(), // FIXME: initial split?
             amount,
             phantom: ::core::marker::PhantomData,
         }
     }
 }
 
-impl<'a, D, R, T> ParallelIterator for ParallelDistIter<'a, D, R, T>
+impl<'a, D, R, T> ParallelIterator for ParallelDistIterN<'a, D, R, T>
     where D: Distribution<T> + Send + Sync,
           R: Rng + SeedableRng + Send,
           T: Send,
@@ -66,7 +171,7 @@ impl<'a, D, R, T> ParallelIterator for ParallelDistIter<'a, D, R, T>
     }
 }
 
-impl<'a, D, R, T> IndexedParallelIterator for ParallelDistIter<'a, D, R, T>
+impl<'a, D, R, T> IndexedParallelIterator for ParallelDistIterN<'a, D, R, T>
     where D: Distribution<T> + Send + Sync,
           R: Rng + SeedableRng + Send,
           T: Send,
@@ -185,6 +290,9 @@ impl<'a, D, R, T> DoubleEndedIterator for BoundedDistIter<'a, D, R, T>
         }
     }
 }
+
+impl<'a, D, R, T> FusedIterator for BoundedDistIter<'a, D, R, T>
+    where D: Distribution<T>, R: Rng {}
 
 impl<'a, D, R, T> ExactSizeIterator for BoundedDistIter<'a, D, R, T>
     where D: Distribution<T>, R: Rng

@@ -44,7 +44,7 @@ fn gen_100_000_parallel(b: &mut Bencher) {
     let mut rng = XorShiftRng::from_entropy();
 
     b.iter(|| {
-        let vec: Vec<f64> = Standard.sample_par_iter(&mut rng, 100_000).collect();
+        let vec: Vec<f64> = Standard.sample_par_iter(&mut rng).take(100_000).collect();
         black_box(vec[0]);
     });
     b.bytes = 100_000 * 8;
