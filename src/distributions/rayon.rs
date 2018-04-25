@@ -68,7 +68,7 @@ impl<'a, D, R, T> ParallelDistIter<'a, D, R, T> {
     pub fn zip<Z>(self, zip_op: Z)
         -> Zip<ParallelDistIterN<'a, D, R, T>, Z::Iter>
         where D: Distribution<T> + Send + Sync,
-              R: Rng + SeedableRng + Send,
+              R: Rng + SeedableRng + Clone + Send,
               T: Send,
               Z: IntoParallelIterator,
               Z::Iter: IndexedParallelIterator
@@ -81,7 +81,7 @@ impl<'a, D, R, T> ParallelDistIter<'a, D, R, T> {
 
 impl<'a, D, R, T> ParallelIterator for ParallelDistIter<'a, D, R, T>
     where D: Distribution<T> + Send + Sync,
-          R: Rng + SeedableRng + Send,
+          R: Rng + SeedableRng + Clone + Send,
           T: Send,
 {
     type Item = T;
@@ -97,7 +97,7 @@ impl<'a, D, R, T> ParallelIterator for ParallelDistIter<'a, D, R, T>
 
 impl<'a, D, R, T> UnindexedProducer for ParallelDistIter<'a, D, R, T>
     where D: Distribution<T> + Send + Sync,
-          R: Rng + SeedableRng + Send,
+          R: Rng + SeedableRng + Clone + Send,
           T: Send,
 {
     type Item = T;
@@ -142,7 +142,7 @@ impl<'a, D, R, T> ParallelDistIterN<'a, D, R, T> {
     pub fn new(distr: &'a D, rng: &mut R, amount: usize)
         -> ParallelDistIterN<'a, D, R, T>
         where D: Distribution<T>,
-              R: Rng + SeedableRng,
+              R: Rng + SeedableRng + Clone,
     {
         ParallelDistIterN {
             distr,
@@ -155,7 +155,7 @@ impl<'a, D, R, T> ParallelDistIterN<'a, D, R, T> {
 
 impl<'a, D, R, T> ParallelIterator for ParallelDistIterN<'a, D, R, T>
     where D: Distribution<T> + Send + Sync,
-          R: Rng + SeedableRng + Send,
+          R: Rng + SeedableRng + Clone + Send,
           T: Send,
 {
     type Item = T;
@@ -173,7 +173,7 @@ impl<'a, D, R, T> ParallelIterator for ParallelDistIterN<'a, D, R, T>
 
 impl<'a, D, R, T> IndexedParallelIterator for ParallelDistIterN<'a, D, R, T>
     where D: Distribution<T> + Send + Sync,
-          R: Rng + SeedableRng + Send,
+          R: Rng + SeedableRng + Clone + Send,
           T: Send,
 {
     fn drive<C>(self, consumer: C) -> C::Result
@@ -219,7 +219,7 @@ pub struct DistProducer<'a, D: 'a, R, T> {
 /// PRNG is created.
 impl<'a, D, R, T> Producer for DistProducer<'a, D, R, T>
     where D: Distribution<T> + Send + Sync,
-          R: Rng + SeedableRng + Send,
+          R: Rng + SeedableRng + Clone + Send,
           T: Send,
 {
     type Item = T;
@@ -237,7 +237,7 @@ impl<'a, D, R, T> Producer for DistProducer<'a, D, R, T>
         let new = DistProducer {
             distr: self.distr,
             amount: self.amount - index,
-            rng: R::split(&mut self.rng, self.split_level),
+            rng: R::split(&self.rng, self.split_level),
             split_level: self.split_level + 1,
             phantom: ::core::marker::PhantomData,
         };

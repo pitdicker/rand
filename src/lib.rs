@@ -210,6 +210,7 @@ pub use rand_core::{ErrorKind, Error};
 #[cfg(feature="std")] pub use entropy_rng::EntropyRng;
 #[cfg(feature="std")] pub use os::OsRng;
 pub use reseeding::ReseedingRng;
+pub use splittablerng::SplittableRng;
 #[cfg(feature="std")] pub use thread_rng::{ThreadRng, thread_rng};
 #[cfg(feature="std")] #[allow(deprecated)] pub use thread_rng::random;
 
@@ -239,7 +240,9 @@ pub mod isaac {
 
 // private modules
 #[cfg(feature="std")] mod entropy_rng;
+#[cfg(feature="rayon")] mod map_with_rng;
 mod reseeding;
+mod splittablerng;
 #[cfg(feature="std")] mod thread_rng;
 
 
@@ -617,7 +620,7 @@ pub trait Rng: RngCore {
     fn gen_ascii_chars(&mut self) -> AsciiGenerator<&mut Self> {
         AsciiGenerator { rng: self }
     }
-
+/*
     /// Create a parallel iterator.
     #[cfg(feature = "rayon")]
     fn par_iter_map<F, B>(&mut self, map_op: F) -> ParallelRngMap<Self, F>
@@ -627,8 +630,9 @@ pub trait Rng: RngCore {
     {
         new_iter_map(self, map_op)
     }
+*/
 }
-
+/*
 /// FIXME: description
 pub struct ParallelRngMap<R, F> {
     rng: R,
@@ -697,7 +701,7 @@ impl<R, F, B> UnindexedProducer for ParallelRngMap<R, F>
     }
 }
 
-
+*/
 
 
 

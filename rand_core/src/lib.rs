@@ -429,12 +429,13 @@ pub trait SeedableRng: Sized {
     }
 }
 */
-    fn split(&mut self, split_level: u8) -> Self
-         where Self: RngCore
+    fn split(&self, split_level: u8) -> Self
+         where Self: RngCore + Clone
     {
         // Seed a new RNG from the parent RNG.
+        let mut rng = self.clone();
         let mut seed = Self::Seed::default();
-        self.fill_bytes(seed.as_mut());
+        rng.fill_bytes(seed.as_mut());
         // Adding `split_level` to the state may improve things a bit for
         // primitive RNGs like Xorshift. FIXME: check
         let tmp = seed.as_mut()[0];
