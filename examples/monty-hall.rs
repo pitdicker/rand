@@ -64,7 +64,7 @@ fn simulate<R: Rng>(random_door: &Uniform<u32>, rng: &mut R)
 // where the car is. The game host will never open the door with the car.
 fn game_host_open<R: Rng>(car: u32, choice: u32, rng: &mut R) -> u32 {
     let choices = free_doors(&[car, choice]);
-    rand::seq::sample_slice(rng, &choices, 1)[0]
+    rand::seq::sample_slice(rng, &choices, 1, true)[0]
 }
 
 // Returns the door we switch to, given our current choice and

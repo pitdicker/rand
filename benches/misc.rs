@@ -110,7 +110,7 @@ fn misc_sample_slice_10_of_100(b: &mut Bencher) {
     let mut rng = SmallRng::from_rng(thread_rng()).unwrap();
     let x : &[usize] = &[1; 100];
     b.iter(|| {
-        sample_slice(&mut rng, x, 10)
+        sample_slice(&mut rng, x, 10, true)
     })
 }
 
@@ -119,7 +119,7 @@ fn misc_sample_slice_ref_10_of_100(b: &mut Bencher) {
     let mut rng = SmallRng::from_rng(thread_rng()).unwrap();
     let x : &[usize] = &[1; 100];
     b.iter(|| {
-        sample_slice_ref(&mut rng, x, 10)
+        sample_slice_ref(&mut rng, x, 10, true)
     })
 }
 
@@ -129,7 +129,7 @@ macro_rules! sample_indices {
         fn $name(b: &mut Bencher) {
             let mut rng = SmallRng::from_rng(thread_rng()).unwrap();
             b.iter(|| {
-                $fn(&mut rng, $length, $amount)
+                $fn(&mut rng, $length, $amount, false)
             })
         }
     }
