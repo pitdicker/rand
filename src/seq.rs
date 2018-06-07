@@ -158,6 +158,24 @@ pub fn sample_indices<R>(rng: &mut R, length: usize, amount: usize) -> Vec<usize
     }
 }
 
+/// Randomly sample exactly `amount` indices from `0..length`, using Floyd's
+/// combination algorithm.
+///
+/// This implementation uses `O(amount)` memory and `O(amount^2)` time.
+fn sample_indices_floyd<R>(rng: &mut R, length: usize, amount: usize)
+    -> Vec<usize>
+    where R: Rng + ?Sized,
+{
+    debug_assert!(amount <= length);
+    let mut indices = Vec::with_capacity(amount);
+    for j in length - amount .. length {
+        let t = rng.gen_range(0, j + 1);
+        let t = if indices.contains(&t) { j } else { t };
+        indices.push( t );
+    }
+    indices
+}
+
 /// Sample an amount of indices using an inplace partial fisher yates method.
 ///
 /// This allocates the entire `length` of indices and randomizes only the first `amount`.
