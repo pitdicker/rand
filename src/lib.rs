@@ -234,6 +234,7 @@
 #![cfg_attr(all(feature="i128_support", feature="nightly"), allow(stable_features))] // stable since 2018-03-27
 #![cfg_attr(all(feature="i128_support", feature="nightly"), feature(i128_type, i128))]
 #![cfg_attr(all(feature="simd_support", feature="nightly"), feature(stdsimd))]
+#![cfg_attr(all(feature="simd_support", feature="nightly"), feature(platform_intrinsics))]
 #![cfg_attr(feature = "stdweb", recursion_limit="128")]
 
 #[cfg(feature="std")] extern crate std as core;
