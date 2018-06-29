@@ -164,7 +164,10 @@ macro_rules! simd_less_then {
 #[cfg(feature="simd_support")] simd_less_then! { f64x8 }
 
 
-// Until portable shuffles land in stdsimd, we expose and use the shuffle intrinsics directly.
+// Until portable shuffles land in stdsimd, we expose and use the shuffle
+// intrinsics directly.
+//
+// https://github.com/rust-lang-nursery/stdsimd/issues/388
 #[cfg(feature = "simd_support")]
 extern "platform-intrinsic" {
     fn simd_shuffle2<T, U>(a: T, b: T, indices: [u32; 2]) -> U;
@@ -185,7 +188,7 @@ trait SwapBytes {
 // `simd_shuffleX` require constant indices, making this a small pain to implement
 #[cfg(feature = "simd_support")]
 macro_rules! impl_swap_bytes {
-    ($ty:ident, $vec8:ident, $shuf:ident, $indices:expr) => (
+    ($vec8:ident, $shuf:ident, $indices:expr, $ty:ident) => (
         impl SwapBytes for $ty {
             fn swap_bytes(self) -> Self {
                 let vec8 = $vec8::from_bits(self);
