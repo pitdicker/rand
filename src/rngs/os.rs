@@ -462,26 +462,38 @@ mod imp {
     }
 
     fn is_getrandom_available() -> bool {
-        static CHECKER: Once = ONCE_INIT;
-        static AVAILABLE: AtomicBool = ATOMIC_BOOL_INIT;
+        use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
+
+        // We cache the result of this check in a static.
+        //
+        // In theory this check can run multiple times when called concurrently.
+        // While that is slightly wasteful, the worst that can happen is that it
+        // gets logged twice. This is less complex than scheduling other threads
+        // to wait until the first test is completed (as std::sync::once does).
+        static GETRANDOM_AVAILABLE: AtomicUsize = ATOMIC_USIZE_INIT;
+        const FALSE: usize = 0x1; // false as usize + 1
+        const TRUE: usize = 0x2; // true as usize + 1
 
         if NR_GETRANDOM == 0 { return false };
 
-        CHECKER.call_once(|| {
-            debug!("OsRng: testing getrandom");
-            let mut buf: [u8; 0] = [];
-            let result = getrandom(&mut buf, false);
-            let available = if result == -1 {
-                let err = io::Error::last_os_error().raw_os_error();
-                err != Some(libc::ENOSYS)
-            } else {
-                true
-            };
-            AVAILABLE.store(available, Ordering::Relaxed);
-            info!("OsRng: using {}", if available { "getrandom" } else { "/dev/urandom" });
-        });
-
-        AVAILABLE.load(Ordering::Relaxed)
+        match GETRANDOM_AVAILABLE.load(Ordering::Relaxed) {
+            TRUE => true,
+            FALSE => false,
+            _ => {
+                debug!("OsRng: testing getrandom");
+                let mut buf: [u8; 0] = [];
+                let result = getrandom(&mut buf, false);
+                let available = if result == -1 {
+                    let err = io::Error::last_os_error().raw_os_error();
+                    err != Some(libc::ENOSYS)
+                } else {
+                    true
+                };
+                GETRANDOM_AVAILABLE.store(available as usize + 1, Ordering::Relaxed);
+                info!("OsRng: using {}", if available { "getrandom" } else { "/dev/urandom" });
+                available
+            }
+        }
     }
 }
 
@@ -715,27 +727,36 @@ mod imp {
     }
 
     fn is_getrandom_available() -> bool {
-        use std::sync::atomic::{AtomicBool, ATOMIC_BOOL_INIT, Ordering};
-        use std::sync::{Once, ONCE_INIT};
+        use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
 
-        static CHECKER: Once = ONCE_INIT;
-        static AVAILABLE: AtomicBool = ATOMIC_BOOL_INIT;
+        // We cache the result of this check in a static.
+        //
+        // In theory this check can run multiple times when called concurrently.
+        // While that is slightly wasteful, the worst that can happen is that it
+        // gets logged twice. This is less complex than scheduling other threads
+        // to wait until the first test is completed (as std::sync::once does).
+        static GETRANDOM_AVAILABLE: AtomicUsize = ATOMIC_USIZE_INIT;
+        const FALSE: usize = 0x1; // false as usize + 1
+        const TRUE: usize = 0x2; // true as usize + 1
 
-        CHECKER.call_once(|| {
-            debug!("OsRng: testing getrandom");
-            let mut buf: [u8; 0] = [];
-            let result = getrandom(&mut buf, false);
-            let available = if result == -1 {
-                let err = io::Error::last_os_error().raw_os_error();
-                err != Some(libc::ENOSYS)
-            } else {
-                true
-            };
-            AVAILABLE.store(available, Ordering::Relaxed);
-            info!("OsRng: using {}", if available { "getrandom" } else { "/dev/random" });
-        });
-
-        AVAILABLE.load(Ordering::Relaxed)
+        match GETRANDOM_AVAILABLE.load(Ordering::Relaxed) {
+            TRUE => true,
+            FALSE => false,
+            _ => {
+                debug!("OsRng: testing getrandom");
+                let mut buf: [u8; 0] = [];
+                let result = getrandom(&mut buf, false);
+                let available = if result == -1 {
+                    let err = io::Error::last_os_error().raw_os_error();
+                    err != Some(libc::ENOSYS)
+                } else {
+                    true
+                };
+                GETRANDOM_AVAILABLE.store(available as usize + 1, Ordering::Relaxed);
+                info!("OsRng: using {}", if available { "getrandom" } else { "/dev/random" });
+                available
+            }
+        }
     }
 }
 
