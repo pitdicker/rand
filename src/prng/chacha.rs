@@ -183,7 +183,7 @@ impl ChaChaRng {
 /// The core of `ChaChaRng`, used with `BlockRng`.
 #[derive(Clone)]
 pub struct ChaChaCore {
-    state: [u32; STATE_WORDS],
+    pub(crate) state: [u32; STATE_WORDS],
 }
 
 // Custom Debug implementation that does not expose the internal state
@@ -256,7 +256,7 @@ impl SeedableRng for ChaChaCore {
             state: [0x61707865, 0x3320646E, 0x79622D32, 0x6B206574, // constants
                     seed_le[0], seed_le[1], seed_le[2], seed_le[3], // seed
                     seed_le[4], seed_le[5], seed_le[6], seed_le[7], // seed
-                    0, 0, 0, 0], // counter
+                    0, 0, 0, 0], // counter and stream
          }
     }
 }
