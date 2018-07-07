@@ -222,11 +222,11 @@ impl RngCore for OsRng {
 
 trait OsRngImpl where Self: Sized {
     // Create a new `OsRng` platform interface.
-    fn new() -> Result<Self, io::Error>;
+    fn new() -> Result<Self, SystemError>;
 
     // Fill a chunk with random bytes.
     fn fill_chunk(&mut self, dest: &mut [u8], block_until_seeded: bool)
-        -> Result<usize, io::Error>;
+        -> Result<usize, SystemError>;
 
     // Maximum chunk size supported.
     fn max_chunk_size(&self) -> usize { ::core::usize::MAX }
@@ -235,8 +235,15 @@ trait OsRngImpl where Self: Sized {
     fn method_str(&self) -> &'static str;
 }
 
+#[cfg(not(all(target_arch = "wasm32",
+              not(target_os = "emscripten"),
+              feature = "stdweb")))]
+type SystemError = io::Error;
 
-fn map_err(error: io::Error) -> Error {
+#[cfg(not(all(target_arch = "wasm32",
+              not(target_os = "emscripten"),
+              feature = "stdweb")))]
+fn map_err(error: SystemError) -> Error {
      use std::io;
      match error.kind() {
         io::ErrorKind::Interrupted =>
@@ -248,7 +255,18 @@ fn map_err(error: io::Error) -> Error {
     }
 }
 
+#[cfg(all(target_arch = "wasm32",
+          not(target_os = "emscripten"),
+          feature = "stdweb"))]
+type SystemError = ::stdweb::web::error::Error;
 
+#[cfg(all(target_arch = "wasm32",
+          not(target_os = "emscripten"),
+          feature = "stdweb"))]
+fn map_err(error: SystemError) -> Error {
+     Error::with_cause(ErrorKind::Unavailable,
+                       "WASM Error", error)
+}
 
 // Helper functions to read from a random device such as `/dev/urandom`.
 //
@@ -260,18 +278,17 @@ fn map_err(error: io::Error) -> Error {
           target_os = "haiku", target_os = "emscripten"))]
 mod random_device {
     use std::fs::File;
-    use std::io;
     use std::io::Read;
     use std::sync::{Once, Mutex, ONCE_INIT};
-    use std::sync::atomic::{AtomicBool, ATOMIC_BOOL_INIT, Ordering};
+    use super::SystemError;
 
     // TODO: remove outer Option when `Mutex::new(None)` is a constant expression
     static mut READ_RNG_FILE: Option<Mutex<Option<File>>> = None;
     static READ_RNG_ONCE: Once = ONCE_INIT;
 
     #[allow(unused)]
-    pub fn open<F>(path: &'static str, open_fn: F) -> Result<(), io::Error>
-        where F: Fn(&'static str) -> Result<File, io::Error>
+    pub fn open<F>(path: &'static str, open_fn: F) -> Result<(), SystemError>
+        where F: Fn(&'static str) -> Result<File, SystemError>
     {
         READ_RNG_ONCE.call_once(|| {
             unsafe { READ_RNG_FILE = Some(Mutex::new(None)) }
@@ -290,7 +307,7 @@ mod random_device {
         Ok(())
     }
 
-    pub fn read(dest: &mut [u8]) -> Result<usize, io::Error> {
+    pub fn read(dest: &mut [u8]) -> Result<usize, SystemError> {
         // We expect this function only to be used after `random_device::open`
         // was succesful. Therefore we can assume that our memory was set with a
         // valid object.
@@ -306,10 +323,11 @@ mod random_device {
     #[cfg(any(target_os = "linux", target_os = "android",
               target_os = "netbsd", target_os = "solaris"))]
     pub fn test_initialized(dest: &mut [u8], blocking: bool)
-        -> Result<usize, io::Error>
+        -> Result<usize, SystemError>
     {
         use std::fs::OpenOptions;
         use std::os::unix::fs::OpenOptionsExt;
+        use std::sync::atomic::{AtomicBool, ATOMIC_BOOL_INIT, Ordering};
         extern crate libc;
 
         static OS_RNG_INITIALIZED: AtomicBool = ATOMIC_BOOL_INIT;
@@ -333,26 +351,25 @@ mod imp {
     extern crate libc;
 
     use super::random_device;
-    use super::OsRngImpl;
+    use super::{OsRngImpl, SystemError};
 
-    use std::io;
     use std::fs::File;
     use std::sync::atomic::{AtomicBool, ATOMIC_BOOL_INIT, Ordering};
     use std::sync::{Once, ONCE_INIT};
 
     #[derive(Clone, Debug)]
-    pub struct OsRng();
+    pub struct OsRng;
 
     impl OsRngImpl for OsRng {
-        fn new() -> Result<OsRng, io::Error> {
+        fn new() -> Result<OsRng, SystemError> {
             if !is_getrandom_available() {
                 random_device::open("/dev/urandom", &|p| File::open(p))?;
             }
-            Ok(OsRng())
+            Ok(OsRng)
         }
 
         fn fill_chunk(&mut self, dest: &mut [u8], block_until_seeded: bool)
-            -> Result<usize, io::Error>
+            -> Result<usize, SystemError>
         {
             match is_getrandom_available() {
                 true => getrandom(dest, block_until_seeded),
@@ -370,7 +387,7 @@ mod imp {
         }
     }
 
-    fn getrandom(buf: &mut [u8], blocking: bool) -> Result<usize, io::Error> {
+    fn getrandom(buf: &mut [u8], blocking: bool) -> Result<usize, SystemError> {
         #[cfg(target_arch = "x86_64")]
         const NR_GETRANDOM: libc::c_long = 318;
         #[cfg(target_arch = "x86")]
@@ -398,7 +415,7 @@ mod imp {
                     if blocking { 0 } else { GRND_NONBLOCK })
         };
         match n {
-            -1 => Err(io::Error::last_os_error()),
+            -1 => Err(SystemError::last_os_error()),
             _ => Ok(n as usize)
         }
     }
@@ -427,24 +444,20 @@ mod imp {
 #[cfg(target_os = "netbsd")]
 mod imp {
     use super::random_device;
-    use super::OsRngImpl;
-
+    use super::{OsRngImpl, SystemError};
     use std::fs::File;
-    use std::io;
-    use std::io::Read;
-    use std::sync::atomic::{AtomicBool, ATOMIC_BOOL_INIT, Ordering};
 
     #[derive(Clone, Debug)]
-    pub struct OsRng();
+    pub struct OsRng;
 
     impl OsRngImpl for OsRng {
-        fn new() -> Result<OsRng, io::Error> {
+        fn new() -> Result<OsRng, SystemError> {
             random_device::open("/dev/urandom", &|p| File::open(p))?;
-            Ok(OsRng())
+            Ok(OsRng)
         }
 
         fn fill_chunk(&mut self, dest: &mut [u8], _block_until_seeded: bool)
-            -> Result<usize, io::Error>
+            -> Result<usize, SystemError>
         {
             // Read a single byte from `/dev/random` to determine if the OS RNG
             // is already seeded. NetBSD always blocks if not yet ready.
@@ -462,21 +475,20 @@ mod imp {
           target_os = "emscripten"))]
 mod imp {
     use super::random_device;
-    use super::OsRngImpl;
+    use super::{OsRngImpl, SystemError};
     use std::fs::File;
-    use std::io;
 
     #[derive(Clone, Debug)]
-    pub struct OsRng();
+    pub struct OsRng;
 
     impl OsRngImpl for OsRng {
-        fn new() -> Result<OsRng, io::Error> {
+        fn new() -> Result<OsRng, SystemError> {
             random_device::open("/dev/random", &|p| File::open(p))?;
-            Ok(OsRng())
+            Ok(OsRng)
         }
 
         fn fill_chunk(&mut self, dest: &mut [u8], _block_until_seeded: bool)
-            -> Result<usize, io::Error>
+            -> Result<usize, SystemError>
         {
             random_device::read(dest)
         }
@@ -510,17 +522,16 @@ mod imp {
     extern crate libc;
 
     use super::random_device;
-    use super::OsRngImpl;
+    use super::{OsRngImpl, SystemError};
 
-    use std::io;
     use std::fs::OpenOptions;
     use std::os::unix::fs::OpenOptionsExt;
 
     #[derive(Clone, Debug)]
-    pub struct OsRng();
+    pub struct OsRng;
 
     impl OsRngImpl for OsRng {
-        fn new() -> Result<OsRng, io::Error> {
+        fn new() -> Result<OsRng, SystemError> {
             if !is_getrandom_available() {
                 let open = |p| OpenOptions::new()
                     .read(true)
@@ -528,11 +539,11 @@ mod imp {
                     .open(p);
                 random_device::open("/dev/random", &open)?;
             }
-            Ok(OsRng())
+            Ok(OsRng)
         }
 
         fn fill_chunk(&mut self, dest: &mut [u8], block_until_seeded: bool)
-            -> Result<usize, io::Error>
+            -> Result<usize, SystemError>
         {
            match is_getrandom_available() {
                 true => getrandom(dest, block_until_seeded),
@@ -559,7 +570,7 @@ mod imp {
         }
     }
 
-    fn getrandom(buf: &mut [u8], blocking: bool) -> Result<usize, io::Error> {
+    fn getrandom(buf: &mut [u8], blocking: bool) -> Result<usize, SystemError> {
         extern "C" {
             fn syscall(number: libc::c_long, ...) -> libc::c_long;
         }
@@ -573,7 +584,7 @@ mod imp {
                     if blocking { 0 } else { GRND_NONBLOCK } | GRND_RANDOM)
         };
         match n {
-            -1 | 0 => Err(io::Error::last_os_error()),
+            -1 | 0 => Err(SystemError::last_os_error()),
             _ => Ok(n as usize)
         }
     }
@@ -606,22 +617,21 @@ mod imp {
 mod imp {
     extern crate cloudabi;
 
-    use super::OsRngImpl;
-    use std::io;
+    use super::{OsRngImpl, SystemError};
 
     #[derive(Clone, Debug)]
     pub struct OsRng;
 
     impl OsRngImpl for OsRng {
-        fn new() -> Result<OsRng, io::Error> { Ok(OsRng) }
+        fn new() -> Result<OsRng, SystemError> { Ok(OsRng) }
 
         fn fill_chunk(&mut self, dest: &mut [u8], _block_until_seeded: bool)
-            -> Result<usize, io::Error>
+            -> Result<usize, SystemError>
         {
             let errno = unsafe { cloudabi::random_get(dest) };
             match errno {
                 cloudabi::errno::SUCCESS => Ok(dest.len()),
-                _ => Err(io::Error::from_raw_os_error(errno as i32)),
+                _ => Err(SystemError::from_raw_os_error(errno as i32)),
             }
         }
 
@@ -635,8 +645,7 @@ mod imp {
 mod imp {
     extern crate libc;
 
-    use super::OsRngImpl;
-    use std::io;
+    use super::{OsRngImpl, SystemError};
 
     use self::libc::{c_int, size_t};
 
@@ -655,10 +664,10 @@ mod imp {
     }
 
     impl OsRngImpl for OsRng {
-        fn new() -> Result<OsRng, io::Error> { Ok(OsRng) }
+        fn new() -> Result<OsRng, SystemError> { Ok(OsRng) }
 
         fn fill_chunk(&mut self, dest: &mut [u8], _block_until_seeded: bool)
-            -> Result<usize, io::Error>
+            -> Result<usize, SystemError>
         {
             let status = unsafe {
                 SecRandomCopyBytes(kSecRandomDefault,
@@ -667,7 +676,7 @@ mod imp {
             };
             match status {
                 errSecSuccess => Ok(dest.len()),
-                _ => Err(io::Error::last_os_error()),
+                _ => Err(SystemError::last_os_error()),
             }
         }
 
@@ -680,17 +689,17 @@ mod imp {
 mod imp {
     extern crate libc;
 
-    use super::OsRngImpl;
-    use std::{io, ptr};
+    use super::{OsRngImpl, SystemError};
+    use std::ptr;
 
     #[derive(Clone, Debug)]
     pub struct OsRng;
 
     impl OsRngImpl for OsRng {
-        fn new() -> Result<OsRng, io::Error> { Ok(OsRng) }
+        fn new() -> Result<OsRng, SystemError> { Ok(OsRng) }
 
         fn fill_chunk(&mut self, dest: &mut [u8], _block_until_seeded: bool)
-            -> Result<usize, io::Error>
+            -> Result<usize, SystemError>
         {
             let mib = [libc::CTL_KERN, libc::KERN_ARND];
             let mut len = dest.len();
@@ -700,7 +709,7 @@ mod imp {
                              ptr::null(), 0)
             };
             match ret {
-                -1 => Err(io::Error::last_os_error()),
+                -1 => Err(SystemError::last_os_error()),
                 _ => Ok(len),
             }
         }
@@ -716,23 +725,22 @@ mod imp {
 mod imp {
     extern crate libc;
 
-    use super::OsRngImpl;
-    use std::io;
+    use super::{OsRngImpl, SystemError};
 
     #[derive(Clone, Debug)]
     pub struct OsRng;
 
     impl OsRngImpl for OsRng {
-        fn new() -> Result<OsRng, io::Error> { Ok(OsRng) }
+        fn new() -> Result<OsRng, SystemError> { Ok(OsRng) }
 
         fn fill_chunk(&mut self, dest: &mut [u8], _block_until_seeded: bool)
-            -> Result<usize, io::Error>
+            -> Result<usize, SystemError>
         {
             let ret = unsafe {
                 libc::getentropy(dest.as_mut_ptr() as *mut libc::c_void, dest.len())
             };
             match ret {
-                -1 => Err(io::Error::last_os_error()),
+                -1 => Err(SystemError::last_os_error()),
                 _ => Ok(ret),
             }
         }
@@ -747,21 +755,20 @@ mod imp {
 #[cfg(target_os = "redox")]
 mod imp {
     use super::random_device;
-    use super::OsRngImpl;
+    use super::{OsRngImpl, SystemError};
     use std::fs::File;
-    use std::io;
 
     #[derive(Clone, Debug)]
-    pub struct OsRng();
+    pub struct OsRng;
 
     impl OsRngImpl for OsRng {
-        fn new() -> Result<OsRng, io::Error> {
+        fn new() -> Result<OsRng, SystemError> {
             random_device::open("rand:", &|p| File::open(p))?;
-            Ok(OsRng())
+            Ok(OsRng)
         }
 
         fn fill_chunk(&mut self, dest: &mut [u8], _block_until_seeded: bool)
-            -> Result<usize, io::Error>
+            -> Result<usize, SystemError>
         {
             random_device::read(dest)
         }
@@ -775,17 +782,16 @@ mod imp {
 mod imp {
     extern crate fuchsia_zircon;
 
-    use super::OsRngImpl;
-    use std::io;
+    use super::{OsRngImpl, SystemError};
 
     #[derive(Clone, Debug)]
     pub struct OsRng;
 
     impl OsRngImpl for OsRng {
-        fn new() -> Result<OsRng, io::Error> { Ok(OsRng) }
+        fn new() -> Result<OsRng, SystemError> { Ok(OsRng) }
 
         fn fill_chunk(&mut self, dest: &mut [u8], _block_until_seeded: bool)
-            -> Result<usize, io::Error>
+            -> Result<usize, SystemError>
         {
             fuchsia_zircon::cprng_draw(dest).map_err(|e| e.into_io_error())
         }
@@ -803,8 +809,7 @@ mod imp {
 mod imp {
     extern crate winapi;
 
-    use super::OsRngImpl;
-    use std::io;
+    use super::{OsRngImpl, SystemError};
 
     use self::winapi::shared::minwindef::ULONG;
     use self::winapi::um::ntsecapi::RtlGenRandom;
@@ -815,16 +820,16 @@ mod imp {
     pub struct OsRng;
 
     impl OsRngImpl for OsRng {
-        fn new() -> Result<OsRng, io::Error> { Ok(OsRng) }
+        fn new() -> Result<OsRng, SystemError> { Ok(OsRng) }
 
         fn fill_chunk(&mut self, dest: &mut [u8], _block_until_seeded: bool)
-            -> Result<usize, io::Error>
+            -> Result<usize, SystemError>
         {
             let ret = unsafe {
                 RtlGenRandom(dest.as_mut_ptr() as PVOID, dest.len() as ULONG)
             };
             match ret {
-                FALSE => Err(io::Error::last_os_error()),
+                FALSE => Err(SystemError::last_os_error()),
                 _ => Ok(dest.len()),
             }
         }
@@ -843,64 +848,24 @@ mod imp {
     use std::mem;
     use stdweb::unstable::TryInto;
     use stdweb::web::error::Error as WebError;
-    use {Error, ErrorKind};
-    use super::OsRngImpl;
-    use std::io;
+    use super::{OsRngImpl, SystemError};
 
     #[derive(Clone, Debug)]
-    enum OsRngMethod {
-        Browser,
-        Node
-    }
-
-    #[derive(Clone, Debug)]
-    pub struct OsRng(OsRngMethod);
+    pub struct OsRng;
 
     impl OsRngImpl for OsRng {
-        fn new() -> Result<OsRng, io::Error> {
-            let result = js! {
-                try {
-                    if (
-                        typeof window === "object" &&
-                        typeof window.crypto === "object" &&
-                        typeof window.crypto.getRandomValues === "function"
-                    ) {
-                        return { success: true, ty: 1 };
-                    }
-
-                    if (typeof require("crypto").randomBytes === "function") {
-                        return { success: true, ty: 2 };
-                    }
-
-                    return { success: false, error: new Error("not supported") };
-                } catch(err) {
-                    return { success: false, error: err };
-                }
-            };
-
-            if js!{ return @{ result.as_ref() }.success } == true {
-                let ty = js!{ return @{ result }.ty };
-
-                if ty == 1 { Ok(OsRng(OsRngMethod::Browser)) }
-                else if ty == 2 { Ok(OsRng(OsRngMethod::Node)) }
-                else { unreachable!() }
-            } else {
-                let err: WebError = js!{ return @{ result }.error }.try_into().unwrap();
-                Err(Error::with_cause(ErrorKind::Unavailable, "WASM Error", err))
-            }
-        }
-
+        fn new() -> Result<OsRng, SystemError> { Ok(OsRng) }
 
         fn fill_chunk(&mut self, dest: &mut [u8], _block_until_seeded: bool)
-            -> Result<usize, io::Error>
+            -> Result<usize, SystemError>
         {
             assert_eq!(mem::size_of::<usize>(), 4);
 
             let len = dest.len() as u32;
             let ptr = dest.as_mut_ptr() as i32;
 
-            let result = match self.0 {
-                OsRngMethod::Browser => js! {
+            let result = match stdweb_interface()? {
+                OsRngInterface::Browser => js! {
                     try {
                         let array = new Uint8Array(@{ len });
                         window.crypto.getRandomValues(array);
@@ -911,7 +876,7 @@ mod imp {
                         return { success: false, error: err };
                     }
                 },
-                OsRngMethod::Node => js! {
+                OsRngInterface::Node => js! {
                     try {
                         let bytes = require("crypto").randomBytes(@{ len });
                         HEAPU8.set(new Uint8Array(bytes), @{ ptr });
@@ -920,25 +885,82 @@ mod imp {
                     } catch(err) {
                         return { success: false, error: err };
                     }
+                },
+                OsRngInterface::NotSupported => {
+                    return Err(WebError::new("not supported"));
                 }
             };
 
             if js!{ return @{ result.as_ref() }.success } == true {
-                Ok(len)
+                Ok(dest.len())
             } else {
-//                let err: WebError = js!{ return @{ result }.error }.try_into().unwrap();
-//                Err(Error::with_cause(ErrorKind::Unexpected, "WASM Error", err))
-                // FIXME
-                Err(Error::new(ErrorKind::Unexpected, "WASM Error"))
+                Err(js!{ return @{ result }.error }.try_into().unwrap())
             }
         }
 
         fn max_chunk_size(&self) -> usize { 65536 }
 
         fn method_str(&self) -> &'static str {
-            match self.0 {
-                OsRngMethod::Browser => "Crypto.getRandomValues",
-                OsRngMethod::Node => "crypto.randomBytes",
+            match stdweb_interface() {
+                Ok(OsRngInterface::Browser) => "Crypto.getRandomValues",
+                Ok(OsRngInterface::Node) => "crypto.randomBytes",
+                Ok(OsRngInterface::NotSupported) => "not supported",
+                _ => "unknown",
+            }
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    enum OsRngInterface {
+        Browser,
+        Node,
+        NotSupported,
+    }
+
+    fn stdweb_interface() -> Result<OsRngInterface, SystemError> {
+        use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
+
+        static JS_INTERFACE: AtomicUsize = ATOMIC_USIZE_INIT;
+        const BROWSER: usize = 0x1;
+        const NODE: usize = 0x2;
+        const NOT_SUPPORTED: usize = 0x3;
+
+        match JS_INTERFACE.load(Ordering::Relaxed) {
+            BROWSER => Ok(OsRngInterface::Browser),
+            NODE => Ok(OsRngInterface::Node),
+            NOT_SUPPORTED => Ok(OsRngInterface::NotSupported),
+            _ => {
+                let result = js! {
+                    try {
+                        if (
+                            typeof window === "object" &&
+                            typeof window.crypto === "object" &&
+                            typeof window.crypto.getRandomValues === "function"
+                        ) {
+                            return { success: true, ty: 1 };
+                        }
+
+                        if (typeof require("crypto").randomBytes === "function") {
+                            return { success: true, ty: 2 };
+                        }
+
+                        return { success: true, ty: 3 };
+                    } catch(err) {
+                        return { success: false, error: err };
+                    }
+                };
+
+                if js!{ return @{ result.as_ref() }.success } == true {
+                    let ty = js!{ return @{ result }.ty }.try_into().unwrap();
+                    JS_INTERFACE.store(ty, Ordering::Relaxed);
+                    match ty {
+                        BROWSER => Ok(OsRngInterface::Browser),
+                        NODE => Ok(OsRngInterface::Node),
+                        NOT_SUPPORTED | _ => Ok(OsRngInterface::NotSupported),
+                    }
+                } else {
+                    Err(js!{ return @{ result }.error }.try_into().unwrap())
+                }
             }
         }
     }
