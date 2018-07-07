@@ -327,7 +327,7 @@ impl RngCore for OsRng {
 #[cfg(feature="std")]
 impl OsRng {
     pub fn new() -> Result<Self, Error> {
-        rngs::OsRng::new().map(OsRng)
+        Ok(OsRng(rngs::OsRng::new()))
     }
 }
 

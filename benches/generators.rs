@@ -39,7 +39,7 @@ gen_bytes!(gen_bytes_isaac, IsaacRng::from_entropy());
 gen_bytes!(gen_bytes_isaac64, Isaac64Rng::from_entropy());
 gen_bytes!(gen_bytes_std, StdRng::from_entropy());
 gen_bytes!(gen_bytes_small, SmallRng::from_entropy());
-gen_bytes!(gen_bytes_os, OsRng::new().unwrap());
+gen_bytes!(gen_bytes_os, OsRng::new());
 
 macro_rules! gen_uint {
     ($fnn:ident, $ty:ty, $gen:expr) => {
@@ -65,7 +65,7 @@ gen_uint!(gen_u32_isaac, u32, IsaacRng::from_entropy());
 gen_uint!(gen_u32_isaac64, u32, Isaac64Rng::from_entropy());
 gen_uint!(gen_u32_std, u32, StdRng::from_entropy());
 gen_uint!(gen_u32_small, u32, SmallRng::from_entropy());
-gen_uint!(gen_u32_os, u32, OsRng::new().unwrap());
+gen_uint!(gen_u32_os, u32, OsRng::new());
 
 gen_uint!(gen_u64_xorshift, u64, XorShiftRng::from_entropy());
 gen_uint!(gen_u64_chacha20, u64, ChaChaRng::from_entropy());
@@ -74,7 +74,7 @@ gen_uint!(gen_u64_isaac, u64, IsaacRng::from_entropy());
 gen_uint!(gen_u64_isaac64, u64, Isaac64Rng::from_entropy());
 gen_uint!(gen_u64_std, u64, StdRng::from_entropy());
 gen_uint!(gen_u64_small, u64, SmallRng::from_entropy());
-gen_uint!(gen_u64_os, u64, OsRng::new().unwrap());
+gen_uint!(gen_u64_os, u64, OsRng::new());
 
 // Do not test JitterRng like the others by running it RAND_BENCH_N times per,
 // measurement, because it is way too slow. Only run it once.
