@@ -14,8 +14,24 @@ use rand_core::{CryptoRng, RngCore, Error, ErrorKind, impls};
 use std::io;
 use std::cmp;
 
-// FIXME: not used on every platform
+#[cfg(any(target_os = "linux", target_os = "android",
+          target_os = "netbsd",
+          target_os = "dragonfly",
+          target_os = "haiku",
+          target_os = "emscripten",
+          target_os = "solaris",
+          target_os = "macos", target_os = "ios",
+          target_os = "freebsd",
+          target_os = "openbsd", target_os = "bitrig",
+))]
 extern crate libc;
+#[cfg(target_os = "cloudabi")]
+extern crate cloudabi;
+#[cfg(target_os = "fuchsia")]
+extern crate fuchsia_zircon;
+#[cfg(windows)]
+extern crate winapi;
+
 
 /// A random number generator that retrieves randomness straight from the
 /// operating system.
@@ -261,9 +277,9 @@ mod random_device {
     fn open(path: &'static str) -> Result<(), SystemError> {
         #[cfg(not(target_os = "redox"))]
         fn open_fn(path: &'static str) -> Result<File, SystemError> {
+            use super::libc;
             use std::fs::OpenOptions;
             use std::os::unix::fs::OpenOptionsExt;
-            extern crate libc;
 
             OpenOptions::new()
                 .read(true)
@@ -312,10 +328,10 @@ mod random_device {
     pub fn test_initialized(dest: &mut [u8], blocking: bool)
         -> Result<usize, SystemError>
     {
+        use super::libc;
         use std::fs::OpenOptions;
         use std::os::unix::fs::OpenOptionsExt;
         use std::sync::atomic::{AtomicBool, ATOMIC_BOOL_INIT, Ordering};
-        extern crate libc;
 
         static OS_RNG_INITIALIZED: AtomicBool = ATOMIC_BOOL_INIT;
         if OS_RNG_INITIALIZED.load(Ordering::Relaxed) { return Ok(0); }
@@ -356,83 +372,6 @@ impl OsRng {
     fn method_str(&self) -> &'static str {
         if is_getrandom_available() { "getrandom" } else { "/dev/urandom" }
     }
-}
-
-#[cfg(any(target_os = "linux", target_os = "android"))]
-fn getrandom(buf: &mut [u8], blocking: bool) -> Result<usize, SystemError> {
-    #[cfg(target_arch = "x86_64")]
-    const NR_GETRANDOM: libc::c_long = 318;
-    #[cfg(target_arch = "x86")]
-    const NR_GETRANDOM: libc::c_long = 355;
-    #[cfg(target_arch = "arm")]
-    const NR_GETRANDOM: libc::c_long = 384;
-    #[cfg(target_arch = "aarch64")]
-    const NR_GETRANDOM: libc::c_long = 278;
-     #[cfg(target_arch = "s390x")]
-    const NR_GETRANDOM: libc::c_long = 349;
-    #[cfg(target_arch = "powerpc")]
-    const NR_GETRANDOM: libc::c_long = 359;
-    #[cfg(target_arch = "mips")] // old ABI
-    const NR_GETRANDOM: libc::c_long = 4353;
-    #[cfg(target_arch = "mips64")]
-    const NR_GETRANDOM: libc::c_long = 5313;
-
-    extern "C" {
-        fn syscall(number: libc::c_long, ...) -> libc::c_long;
-    }
-    const GRND_NONBLOCK: libc::c_uint = 0x0001;
-
-    let n = unsafe {
-        syscall(NR_GETRANDOM, buf.as_mut_ptr(), buf.len(),
-                if blocking { 0 } else { GRND_NONBLOCK })
-    };
-    match n {
-        -1 => Err(SystemError::last_os_error()),
-        _ => Ok(n as usize)
-    }
-}
-#[cfg(target_os = "solaris")]
-fn getrandom(buf: &mut [u8], blocking: bool) -> Result<usize, SystemError> {
-    extern "C" {
-        fn syscall(number: libc::c_long, ...) -> libc::c_long;
-    }
-
-    const SYS_GETRANDOM: libc::c_long = 143;
-    const GRND_NONBLOCK: libc::c_uint = 0x0001;
-    const GRND_RANDOM: libc::c_uint = 0x0002;
-
-    let n = unsafe {
-        syscall(SYS_GETRANDOM, buf.as_mut_ptr(), buf.len(),
-                if blocking { 0 } else { GRND_NONBLOCK } | GRND_RANDOM)
-    };
-    match n {
-        -1 | 0 => Err(SystemError::last_os_error()),
-        _ => Ok(n as usize)
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "android", target_os = "solaris"))]
-fn is_getrandom_available() -> bool {
-    use std::sync::atomic::{AtomicBool, ATOMIC_BOOL_INIT, Ordering};
-    use std::sync::{Once, ONCE_INIT};
-
-    static CHECKER: Once = ONCE_INIT;
-    static AVAILABLE: AtomicBool = ATOMIC_BOOL_INIT;
-
-    CHECKER.call_once(|| {
-        debug!("OsRng: testing getrandom");
-        let mut buf: [u8; 0] = [];
-        let result = getrandom(&mut buf, false);
-        let available = match result {
-            Ok(_) => true,
-            Err(err) => err.raw_os_error().unwrap() != libc::ENOSYS
-        };
-        AVAILABLE.store(available, Ordering::Relaxed);
-        // FIXME: alternative is /dev/random on Solaris
-        info!("OsRng: using {}", if available { "getrandom" } else { "/dev/urandom" });
-    });
-
-    AVAILABLE.load(Ordering::Relaxed)
 }
 
 
@@ -528,8 +467,6 @@ impl OsRng {
 }
 
 
-
-
 #[cfg(target_os = "cloudabi")]
 impl OsRng {
     /// Create a new `OsRng`.
@@ -538,8 +475,6 @@ impl OsRng {
     fn fill_chunk(&mut self, dest: &mut [u8], _block_until_seeded: bool)
         -> Result<usize, SystemError>
     {
-        extern crate cloudabi;
-
         let errno = unsafe { cloudabi::random_get(dest) };
         match errno {
             cloudabi::errno::SUCCESS => Ok(dest.len()),
@@ -667,12 +602,10 @@ impl OsRng {
     fn fill_chunk(&mut self, dest: &mut [u8], _block_until_seeded: bool)
         -> Result<usize, SystemError>
     {
-        extern crate fuchsia_zircon;
         fuchsia_zircon::cprng_draw(dest).map_err(|e| e.into_io_error())
     }
 
     fn max_chunk_size(&self) -> usize {
-        extern crate fuchsia_zircon;
         fuchsia_zircon::sys::ZX_CPRNG_DRAW_MAX_LEN
     }
 
@@ -688,8 +621,6 @@ impl OsRng {
     fn fill_chunk(&mut self, dest: &mut [u8], _block_until_seeded: bool)
         -> Result<usize, SystemError>
     {
-        extern crate winapi;
-
         use self::winapi::shared::minwindef::ULONG;
         use self::winapi::um::ntsecapi::RtlGenRandom;
         use self::winapi::um::winnt::{BOOLEAN, PVOID};
@@ -704,7 +635,10 @@ impl OsRng {
         }
     }
 
-    fn max_chunk_size(&self) -> usize { <ULONG>::max_value() as usize }
+    fn max_chunk_size(&self) -> usize {
+        use self::winapi::shared::minwindef::ULONG;
+        <ULONG>::max_value() as usize
+    }
 
     fn method_str(&self) -> &'static str { "RtlGenRandom" }
 }
@@ -713,126 +647,207 @@ impl OsRng {
 #[cfg(all(target_arch = "wasm32",
           not(target_os = "emscripten"),
           feature = "stdweb"))]
-mod imp {
-    use std::mem;
+impl OsRng {
+    /// Create a new `OsRng`.
+    pub fn new() -> Self { OsRng }
+
+    fn fill_chunk(&mut self, dest: &mut [u8], _block_until_seeded: bool)
+        -> Result<usize, SystemError>
+    {
+        use std::mem;
+        use stdweb::unstable::TryInto;
+        use stdweb::web::error::Error as WebError;
+
+        assert_eq!(mem::size_of::<usize>(), 4);
+
+        let len = dest.len() as u32;
+        let ptr = dest.as_mut_ptr() as i32;
+
+        let result = match stdweb_interface()? {
+            OsRngInterface::Browser => js! {
+                try {
+                    let array = new Uint8Array(@{ len });
+                    window.crypto.getRandomValues(array);
+                    HEAPU8.set(array, @{ ptr });
+
+                    return { success: true };
+                } catch(err) {
+                    return { success: false, error: err };
+                }
+            },
+            OsRngInterface::Node => js! {
+                try {
+                    let bytes = require("crypto").randomBytes(@{ len });
+                    HEAPU8.set(new Uint8Array(bytes), @{ ptr });
+
+                    return { success: true };
+                } catch(err) {
+                    return { success: false, error: err };
+                }
+            },
+            OsRngInterface::NotSupported => {
+                return Err(WebError::new("not supported"));
+            }
+        };
+
+        if js!{ return @{ result.as_ref() }.success } == true {
+            Ok(dest.len())
+        } else {
+            Err(js!{ return @{ result }.error }.try_into().unwrap())
+        }
+    }
+
+    fn max_chunk_size(&self) -> usize { 65536 }
+
+    fn method_str(&self) -> &'static str {
+        match stdweb_interface() {
+            Ok(OsRngInterface::Browser) => "Crypto.getRandomValues",
+            Ok(OsRngInterface::Node) => "crypto.randomBytes",
+            Ok(OsRngInterface::NotSupported) => "not supported",
+            _ => "unknown",
+        }
+    }
+}
+
+#[cfg(all(target_arch = "wasm32",
+          not(target_os = "emscripten"),
+          feature = "stdweb"))]
+enum OsRngInterface {
+    Browser,
+    Node,
+    NotSupported,
+}
+
+#[cfg(all(target_arch = "wasm32",
+          not(target_os = "emscripten"),
+          feature = "stdweb"))]
+fn stdweb_interface() -> Result<OsRngInterface, SystemError> {
+    use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
     use stdweb::unstable::TryInto;
-    use stdweb::web::error::Error as WebError;
-    use super::{OsRngImpl, SystemError};
 
-    #[derive(Clone, Debug)]
-    pub struct OsRng;
+    static JS_INTERFACE: AtomicUsize = ATOMIC_USIZE_INIT;
+    const BROWSER: usize = 0x1;
+    const NODE: usize = 0x2;
+    const NOT_SUPPORTED: usize = 0x3;
 
-    impl OsRngImpl for OsRng {
-        fn new() -> Result<OsRng, SystemError> { Ok(OsRng) }
-
-        fn fill_chunk(&mut self, dest: &mut [u8], _block_until_seeded: bool)
-            -> Result<usize, SystemError>
-        {
-            assert_eq!(mem::size_of::<usize>(), 4);
-
-            let len = dest.len() as u32;
-            let ptr = dest.as_mut_ptr() as i32;
-
-            let result = match stdweb_interface()? {
-                OsRngInterface::Browser => js! {
-                    try {
-                        let array = new Uint8Array(@{ len });
-                        window.crypto.getRandomValues(array);
-                        HEAPU8.set(array, @{ ptr });
-
-                        return { success: true };
-                    } catch(err) {
-                        return { success: false, error: err };
+    match JS_INTERFACE.load(Ordering::Relaxed) {
+        BROWSER => Ok(OsRngInterface::Browser),
+        NODE => Ok(OsRngInterface::Node),
+        NOT_SUPPORTED => Ok(OsRngInterface::NotSupported),
+        _ => {
+            let result = js! {
+                try {
+                    if (
+                        typeof window === "object" &&
+                        typeof window.crypto === "object" &&
+                        typeof window.crypto.getRandomValues === "function"
+                    ) {
+                        return { success: true, ty: 1 };
                     }
-                },
-                OsRngInterface::Node => js! {
-                    try {
-                        let bytes = require("crypto").randomBytes(@{ len });
-                        HEAPU8.set(new Uint8Array(bytes), @{ ptr });
 
-                        return { success: true };
-                    } catch(err) {
-                        return { success: false, error: err };
+                    if (typeof require("crypto").randomBytes === "function") {
+                        return { success: true, ty: 2 };
                     }
-                },
-                OsRngInterface::NotSupported => {
-                    return Err(WebError::new("not supported"));
+
+                    return { success: true, ty: 3 };
+                } catch(err) {
+                    return { success: false, error: err };
                 }
             };
 
             if js!{ return @{ result.as_ref() }.success } == true {
-                Ok(dest.len())
+                let ty = js!{ return @{ result }.ty }.try_into().unwrap();
+                JS_INTERFACE.store(ty, Ordering::Relaxed);
+                match ty {
+                    BROWSER => Ok(OsRngInterface::Browser),
+                    NODE => Ok(OsRngInterface::Node),
+                    NOT_SUPPORTED | _ => Ok(OsRngInterface::NotSupported),
+                }
             } else {
                 Err(js!{ return @{ result }.error }.try_into().unwrap())
             }
         }
+    }
+}
 
-        fn max_chunk_size(&self) -> usize { 65536 }
 
-        fn method_str(&self) -> &'static str {
-            match stdweb_interface() {
-                Ok(OsRngInterface::Browser) => "Crypto.getRandomValues",
-                Ok(OsRngInterface::Node) => "crypto.randomBytes",
-                Ok(OsRngInterface::NotSupported) => "not supported",
-                _ => "unknown",
-            }
-        }
+
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn getrandom(buf: &mut [u8], blocking: bool) -> Result<usize, SystemError> {
+    #[cfg(target_arch = "x86_64")]
+    const NR_GETRANDOM: libc::c_long = 318;
+    #[cfg(target_arch = "x86")]
+    const NR_GETRANDOM: libc::c_long = 355;
+    #[cfg(target_arch = "arm")]
+    const NR_GETRANDOM: libc::c_long = 384;
+    #[cfg(target_arch = "aarch64")]
+    const NR_GETRANDOM: libc::c_long = 278;
+     #[cfg(target_arch = "s390x")]
+    const NR_GETRANDOM: libc::c_long = 349;
+    #[cfg(target_arch = "powerpc")]
+    const NR_GETRANDOM: libc::c_long = 359;
+    #[cfg(target_arch = "mips")] // old ABI
+    const NR_GETRANDOM: libc::c_long = 4353;
+    #[cfg(target_arch = "mips64")]
+    const NR_GETRANDOM: libc::c_long = 5313;
+
+    extern "C" {
+        fn syscall(number: libc::c_long, ...) -> libc::c_long;
+    }
+    const GRND_NONBLOCK: libc::c_uint = 0x0001;
+
+    let n = unsafe {
+        syscall(NR_GETRANDOM, buf.as_mut_ptr(), buf.len(),
+                if blocking { 0 } else { GRND_NONBLOCK })
+    };
+    match n {
+        -1 => Err(SystemError::last_os_error()),
+        _ => Ok(n as usize)
+    }
+}
+#[cfg(target_os = "solaris")]
+fn getrandom(buf: &mut [u8], blocking: bool) -> Result<usize, SystemError> {
+    extern "C" {
+        fn syscall(number: libc::c_long, ...) -> libc::c_long;
     }
 
-    #[derive(Clone, Debug)]
-    enum OsRngInterface {
-        Browser,
-        Node,
-        NotSupported,
+    const SYS_GETRANDOM: libc::c_long = 143;
+    const GRND_NONBLOCK: libc::c_uint = 0x0001;
+    const GRND_RANDOM: libc::c_uint = 0x0002;
+
+    let n = unsafe {
+        syscall(SYS_GETRANDOM, buf.as_mut_ptr(), buf.len(),
+                if blocking { 0 } else { GRND_NONBLOCK } | GRND_RANDOM)
+    };
+    match n {
+        -1 | 0 => Err(SystemError::last_os_error()),
+        _ => Ok(n as usize)
     }
+}
 
-    fn stdweb_interface() -> Result<OsRngInterface, SystemError> {
-        use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "solaris"))]
+fn is_getrandom_available() -> bool {
+    use std::sync::atomic::{AtomicBool, ATOMIC_BOOL_INIT, Ordering};
+    use std::sync::{Once, ONCE_INIT};
 
-        static JS_INTERFACE: AtomicUsize = ATOMIC_USIZE_INIT;
-        const BROWSER: usize = 0x1;
-        const NODE: usize = 0x2;
-        const NOT_SUPPORTED: usize = 0x3;
+    static CHECKER: Once = ONCE_INIT;
+    static AVAILABLE: AtomicBool = ATOMIC_BOOL_INIT;
 
-        match JS_INTERFACE.load(Ordering::Relaxed) {
-            BROWSER => Ok(OsRngInterface::Browser),
-            NODE => Ok(OsRngInterface::Node),
-            NOT_SUPPORTED => Ok(OsRngInterface::NotSupported),
-            _ => {
-                let result = js! {
-                    try {
-                        if (
-                            typeof window === "object" &&
-                            typeof window.crypto === "object" &&
-                            typeof window.crypto.getRandomValues === "function"
-                        ) {
-                            return { success: true, ty: 1 };
-                        }
+    CHECKER.call_once(|| {
+        debug!("OsRng: testing getrandom");
+        let mut buf: [u8; 0] = [];
+        let result = getrandom(&mut buf, false);
+        let available = match result {
+            Ok(_) => true,
+            Err(err) => err.raw_os_error().unwrap() != libc::ENOSYS
+        };
+        AVAILABLE.store(available, Ordering::Relaxed);
+        // FIXME: alternative is /dev/random on Solaris
+        info!("OsRng: using {}", if available { "getrandom" } else { "/dev/urandom" });
+    });
 
-                        if (typeof require("crypto").randomBytes === "function") {
-                            return { success: true, ty: 2 };
-                        }
-
-                        return { success: true, ty: 3 };
-                    } catch(err) {
-                        return { success: false, error: err };
-                    }
-                };
-
-                if js!{ return @{ result.as_ref() }.success } == true {
-                    let ty = js!{ return @{ result }.ty }.try_into().unwrap();
-                    JS_INTERFACE.store(ty, Ordering::Relaxed);
-                    match ty {
-                        BROWSER => Ok(OsRngInterface::Browser),
-                        NODE => Ok(OsRngInterface::Node),
-                        NOT_SUPPORTED | _ => Ok(OsRngInterface::NotSupported),
-                    }
-                } else {
-                    Err(js!{ return @{ result }.error }.try_into().unwrap())
-                }
-            }
-        }
-    }
+    AVAILABLE.load(Ordering::Relaxed)
 }
 
 
