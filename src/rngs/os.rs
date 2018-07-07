@@ -147,64 +147,9 @@ impl RngCore for OsRng {
     }
 
     fn fill_bytes(&mut self, dest: &mut [u8]) {
-        use std::{time, thread};
-
-        // We cannot return Err(..), so we try to handle before panicking.
-        const MAX_RETRY_PERIOD: u32 = 10; // max 10s
-        const WAIT_DUR_MS: u32 = 100; // retry every 100ms
-        let wait_dur = time::Duration::from_millis(WAIT_DUR_MS as u64);
-        const RETRY_LIMIT: u32 = (MAX_RETRY_PERIOD * 1000) / WAIT_DUR_MS;
-        const TRANSIENT_RETRIES: u32 = 8;
-        let mut err_count = 0;
-        let mut error_logged = false;
-
-        // Maybe block until the OS RNG is initialized
-        let mut read = 0;
-        if let Ok(n) = self.0.test_initialized(dest, true) { read = n };
-        let dest = &mut dest[read..];
-
-        loop {
-            if let Err(e) = self.try_fill_bytes(dest) {
-                if err_count >= RETRY_LIMIT {
-                    error!("OsRng failed too many times; last error: {}", e);
-                    panic!("OsRng failed too many times; last error: {}", e);
-                }
-
-                if e.kind.should_wait() {
-                    if !error_logged {
-                        warn!("OsRng failed; waiting up to {}s and retrying. Error: {}",
-                              MAX_RETRY_PERIOD, e);
-                        error_logged = true;
-                    }
-                    err_count += 1;
-                    thread::sleep(wait_dur);
-                    continue;
-                } else if e.kind.should_retry() {
-                    if !error_logged {
-                        warn!("OsRng failed; retrying up to {} times. Error: {}",
-                              TRANSIENT_RETRIES, e);
-                        error_logged = true;
-                    }
-                    err_count += (RETRY_LIMIT + TRANSIENT_RETRIES - 1)
-                            / TRANSIENT_RETRIES;    // round up
-                    continue;
-                } else {
-                    error!("OsRng failed: {}", e);
-                    panic!("OsRng fatal error: {}", e);
-                }
-            }
-
-            break;
-        }
-    }
-
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Error> {
         // Some systems do not support reading 0 random bytes.
         // (And why waste a system call?)
-        if dest.len() == 0 { return Ok(()); }
-
-        let mut read = self.0.test_initialized(dest, false).map_err(map_err)?;
-        let dest = &mut dest[read..];
+        if dest.len() == 0 { return; }
 
         let max = self.0.max_chunk_size();
         if dest.len() <= max {
@@ -215,9 +160,61 @@ impl RngCore for OsRng {
                    dest.len(), self.0.method_str(), (dest.len() + max) / max, max);
         }
 
+        let mut err_count = 0;
+        let mut error_logged = false;
+        const RETRY_LIMIT: u32 = 8;
+
+        let mut read = 0;
         while read < dest.len() {
             let chunkz = cmp::min(max, dest.len() - read);
-            read += self.0.fill_chunk(&mut dest[read..read+chunkz]).map_err(map_err)?;
+            match self.0.fill_chunk(&mut dest[read..read+chunkz], true).map_err(map_err) {
+                Ok(n) => {
+                    read += n;
+                    err_count = 0; // reset after each succesfull read
+                }
+                Err(e) => {
+                    match e.kind {
+                        ErrorKind::Transient |
+                        ErrorKind::NotReady => { // in theory doesn't happen because we do blocking reads.
+                            if err_count >= RETRY_LIMIT {
+                                error!("OsRng failed too many times; last error: {}", e);
+                                panic!("OsRng failed too many times; last error: {}", e);
+                            } else if !error_logged {
+                                warn!("OsRng failed; retrying up to {} times. Error: {}",
+                                      RETRY_LIMIT, e);
+                                error_logged = true;
+                            }
+                            err_count += 1;
+                        }
+                        _ => {
+                            error!("OsRng failed: {}", e);
+                            panic!("OsRng fatal error: {}", e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Error> {
+        // Some systems do not support reading 0 random bytes.
+        // (And why waste a system call?)
+        if dest.len() == 0 { return Ok(()); }
+
+        let max = self.0.max_chunk_size();
+        if dest.len() <= max {
+            trace!("OsRng: reading {} bytes via {}",
+                   dest.len(), self.0.method_str());
+        } else {
+            trace!("OsRng: reading {} bytes via {} in {} chunks of {} bytes",
+                   dest.len(), self.0.method_str(), (dest.len() + max) / max, max);
+        }
+
+        let mut read = 0;
+        while read < dest.len() {
+            let chunkz = cmp::min(max, dest.len() - read);
+            read += self.0.fill_chunk(&mut dest[read..read+chunkz], false)
+                          .map_err(map_err)?;
         }
         Ok(())
     }
@@ -228,18 +225,8 @@ trait OsRngImpl where Self: Sized {
     fn new() -> Result<Self, io::Error>;
 
     // Fill a chunk with random bytes.
-    fn fill_chunk(&mut self, dest: &mut [u8]) -> Result<usize, io::Error>;
-
-    // Test whether the OS RNG is initialized. This method may not be possible
-    // to support cheaply (or at all) on all operating systems.
-    //
-    // If `blocking` is set, this will cause the OS the block execution until
-    // its RNG is initialized.
-    //
-    // Random values that are read while this are stored in `dest`, the amount
-    // of read bytes is returned.
-    fn test_initialized(&mut self, _dest: &mut [u8], _blocking: bool)
-        -> Result<usize, io::Error> { Ok(0) }
+    fn fill_chunk(&mut self, dest: &mut [u8], block_until_seeded: bool)
+        -> Result<usize, io::Error>;
 
     // Maximum chunk size supported.
     fn max_chunk_size(&self) -> usize { ::core::usize::MAX }
@@ -276,6 +263,7 @@ mod random_device {
     use std::io;
     use std::io::Read;
     use std::sync::{Once, Mutex, ONCE_INIT};
+    use std::sync::atomic::{AtomicBool, ATOMIC_BOOL_INIT, Ordering};
 
     // TODO: remove outer Option when `Mutex::new(None)` is a constant expression
     static mut READ_RNG_FILE: Option<Mutex<Option<File>>> = None;
@@ -311,6 +299,32 @@ mod random_device {
         let file = (*guard).as_mut().unwrap();
         file.read(dest)
     }
+
+    // Read from `/dev/random` to determine if the OS RNG is already seeded.
+    // Result is cached, the read is never done again after the first succesfull
+    // one.
+    #[cfg(any(target_os = "linux", target_os = "android",
+              target_os = "netbsd", target_os = "solaris"))]
+    pub fn test_initialized(dest: &mut [u8], blocking: bool)
+        -> Result<usize, io::Error>
+    {
+        use std::fs::OpenOptions;
+        use std::os::unix::fs::OpenOptionsExt;
+        extern crate libc;
+
+        static OS_RNG_INITIALIZED: AtomicBool = ATOMIC_BOOL_INIT;
+        if OS_RNG_INITIALIZED.load(Ordering::Relaxed) { return Ok(0); }
+
+        info!("OsRng: testing random device /dev/random");
+        let mut file = OpenOptions::new()
+            .read(true)
+            .custom_flags(if blocking { 0 } else { libc::O_NONBLOCK })
+            .open("/dev/random")?;
+        let result = file.read(dest)?;
+
+        OS_RNG_INITIALIZED.store(true, Ordering::Relaxed);
+        Ok(result)
+    }
 }
 
 
@@ -322,9 +336,7 @@ mod imp {
     use super::OsRngImpl;
 
     use std::io;
-    use std::io::Read;
-    use std::fs::{File, OpenOptions};
-    use std::os::unix::fs::OpenOptionsExt;
+    use std::fs::File;
     use std::sync::atomic::{AtomicBool, ATOMIC_BOOL_INIT, Ordering};
     use std::sync::{Once, ONCE_INIT};
 
@@ -339,32 +351,18 @@ mod imp {
             Ok(OsRng())
         }
 
-        fn fill_chunk(&mut self, dest: &mut [u8]) -> Result<usize, io::Error> {
-            match is_getrandom_available() {
-                true => getrandom(dest, false),
-                false => random_device::read(dest),
-            }
-        }
-
-        fn test_initialized(&mut self, dest: &mut [u8], blocking: bool)
+        fn fill_chunk(&mut self, dest: &mut [u8], block_until_seeded: bool)
             -> Result<usize, io::Error>
         {
-            static OS_RNG_INITIALIZED: AtomicBool = ATOMIC_BOOL_INIT;
-            if OS_RNG_INITIALIZED.load(Ordering::Relaxed) { return Ok(0); }
-
-            let result =
-                if is_getrandom_available() {
-                    getrandom(dest, blocking)
-                } else {
-                    info!("OsRng: testing random device /dev/random");
-                    let mut file = OpenOptions::new()
-                        .read(true)
-                        .custom_flags(if blocking { 0 } else { libc::O_NONBLOCK })
-                        .open("/dev/random")?;
-                    file.read(&mut dest[..1])
-                };
-            OS_RNG_INITIALIZED.store(true, Ordering::Relaxed);
-            result
+            match is_getrandom_available() {
+                true => getrandom(dest, block_until_seeded),
+                false => {
+                    // Read a single byte from `/dev/random` to determine if the
+                    // OS RNG is already seeded.
+                    let read = random_device::test_initialized(&mut dest[..1], block_until_seeded)?;
+                    random_device::read(&mut dest[read..])
+                }
+            }
         }
 
         fn method_str(&self) -> &'static str {
@@ -445,24 +443,13 @@ mod imp {
             Ok(OsRng())
         }
 
-        fn fill_chunk(&mut self, dest: &mut [u8]) -> Result<usize, io::Error> {
-            random_device::read(dest)
-        }
-
-        // Read a single byte from `/dev/random` to determine if the OS RNG is
-        // already seeded. NetBSD always blocks if not yet ready.
-        fn test_initialized(&mut self, dest: &mut [u8], _blocking: bool)
+        fn fill_chunk(&mut self, dest: &mut [u8], _block_until_seeded: bool)
             -> Result<usize, io::Error>
         {
-            static OS_RNG_INITIALIZED: AtomicBool = ATOMIC_BOOL_INIT;
-            if OS_RNG_INITIALIZED.load(Ordering::Relaxed) { return Ok(0); }
-
-            info!("OsRng: testing random device /dev/random");
-            let mut file = File::open("/dev/random")?;
-            let result = file.read(&mut dest[..1])?;
-
-            OS_RNG_INITIALIZED.store(true, Ordering::Relaxed);
-            Ok(result)
+            // Read a single byte from `/dev/random` to determine if the OS RNG
+            // is already seeded. NetBSD always blocks if not yet ready.
+            let read = random_device::test_initialized(&mut dest[..1], true)?;
+            random_device::read(&mut dest[read..])
         }
 
         fn method_str(&self) -> &'static str { "/dev/urandom" }
@@ -488,7 +475,9 @@ mod imp {
             Ok(OsRng())
         }
 
-        fn fill_chunk(&mut self, dest: &mut [u8]) -> Result<usize, io::Error> {
+        fn fill_chunk(&mut self, dest: &mut [u8], _block_until_seeded: bool)
+            -> Result<usize, io::Error>
+        {
             random_device::read(dest)
         }
 
@@ -524,10 +513,8 @@ mod imp {
     use super::OsRngImpl;
 
     use std::io;
-    use std::io::Read;
-    use std::fs::{File, OpenOptions};
+    use std::fs::OpenOptions;
     use std::os::unix::fs::OpenOptionsExt;
-    use std::sync::atomic::{AtomicBool, ATOMIC_BOOL_INIT, Ordering};
 
     #[derive(Clone, Debug)]
     pub struct OsRng();
@@ -544,38 +531,21 @@ mod imp {
             Ok(OsRng())
         }
 
-        fn fill_chunk(&mut self, dest: &mut [u8]) -> Result<usize, io::Error> {
-            match is_getrandom_available() {
-                true => getrandom(dest, false),
-                false => random_device::read(dest),
-            }
-        }
-
-        fn test_initialized(&mut self, dest: &mut [u8], blocking: bool)
+        fn fill_chunk(&mut self, dest: &mut [u8], block_until_seeded: bool)
             -> Result<usize, io::Error>
         {
-            static OS_RNG_INITIALIZED: AtomicBool = ATOMIC_BOOL_INIT;
-            if OS_RNG_INITIALIZED.load(Ordering::Relaxed) { return Ok(0); }
-
-            let chunk_len = ::core::cmp::min(1024, dest.len());
-            let dest = &mut dest[..chunk_len];
-
-            let result =
-                if is_getrandom_available() {
-                    getrandom(dest, blocking)
-                } else {
-                    if blocking {
-                        info!("OsRng: testing random device /dev/random");
-                        // We already have a non-blocking handle, but now need a
-                        // blocking one. Not much choice except opening it twice
-                        let mut file = File::open("/dev/random")?;
-                        file.read(dest)
-                    } else {
-                        self.fill_chunk(dest)
+           match is_getrandom_available() {
+                true => getrandom(dest, block_until_seeded),
+                false => {
+                    let mut read = 0;
+                    if block_until_seeded {
+                        // Read from `/dev/random` in blocking mode. Only done
+                        // when we do not yet know whether the OS RNG is initialized.
+                        read = random_device::test_initialized(dest, block_until_seeded)?;
                     }
-                };
-            OS_RNG_INITIALIZED.store(true, Ordering::Relaxed);
-            result
+                    random_device::read(&mut dest[read..])
+                }
+            }
         }
 
         fn max_chunk_size(&self) -> usize {
@@ -645,7 +615,9 @@ mod imp {
     impl OsRngImpl for OsRng {
         fn new() -> Result<OsRng, io::Error> { Ok(OsRng) }
 
-        fn fill_chunk(&mut self, dest: &mut [u8]) -> Result<usize, io::Error> {
+        fn fill_chunk(&mut self, dest: &mut [u8], _block_until_seeded: bool)
+            -> Result<usize, io::Error>
+        {
             let errno = unsafe { cloudabi::random_get(dest) };
             match errno {
                 cloudabi::errno::SUCCESS => Ok(dest.len()),
@@ -685,7 +657,9 @@ mod imp {
     impl OsRngImpl for OsRng {
         fn new() -> Result<OsRng, io::Error> { Ok(OsRng) }
 
-        fn fill_chunk(&mut self, dest: &mut [u8]) -> Result<usize, io::Error> {
+        fn fill_chunk(&mut self, dest: &mut [u8], _block_until_seeded: bool)
+            -> Result<usize, io::Error>
+        {
             let status = unsafe {
                 SecRandomCopyBytes(kSecRandomDefault,
                                    dest.len() as size_t,
@@ -715,7 +689,9 @@ mod imp {
     impl OsRngImpl for OsRng {
         fn new() -> Result<OsRng, io::Error> { Ok(OsRng) }
 
-        fn fill_chunk(&mut self, dest: &mut [u8]) -> Result<usize, io::Error> {
+        fn fill_chunk(&mut self, dest: &mut [u8], _block_until_seeded: bool)
+            -> Result<usize, io::Error>
+        {
             let mib = [libc::CTL_KERN, libc::KERN_ARND];
             let mut len = dest.len();
             let ret = unsafe {
@@ -749,7 +725,9 @@ mod imp {
     impl OsRngImpl for OsRng {
         fn new() -> Result<OsRng, io::Error> { Ok(OsRng) }
 
-        fn fill_chunk(&mut self, dest: &mut [u8]) -> Result<usize, io::Error> {
+        fn fill_chunk(&mut self, dest: &mut [u8], _block_until_seeded: bool)
+            -> Result<usize, io::Error>
+        {
             let ret = unsafe {
                 libc::getentropy(dest.as_mut_ptr() as *mut libc::c_void, dest.len())
             };
@@ -782,7 +760,9 @@ mod imp {
             Ok(OsRng())
         }
 
-        fn fill_chunk(&mut self, dest: &mut [u8]) -> Result<usize, io::Error> {
+        fn fill_chunk(&mut self, dest: &mut [u8], _block_until_seeded: bool)
+            -> Result<usize, io::Error>
+        {
             random_device::read(dest)
         }
 
@@ -804,7 +784,9 @@ mod imp {
     impl OsRngImpl for OsRng {
         fn new() -> Result<OsRng, io::Error> { Ok(OsRng) }
 
-        fn fill_chunk(&mut self, dest: &mut [u8]) -> Result<usize, io::Error> {
+        fn fill_chunk(&mut self, dest: &mut [u8], _block_until_seeded: bool)
+            -> Result<usize, io::Error>
+        {
             fuchsia_zircon::cprng_draw(dest).map_err(|e| e.into_io_error())
         }
 
@@ -835,7 +817,9 @@ mod imp {
     impl OsRngImpl for OsRng {
         fn new() -> Result<OsRng, io::Error> { Ok(OsRng) }
 
-        fn fill_chunk(&mut self, dest: &mut [u8]) -> Result<usize, io::Error> {
+        fn fill_chunk(&mut self, dest: &mut [u8], _block_until_seeded: bool)
+            -> Result<usize, io::Error>
+        {
             let ret = unsafe {
                 RtlGenRandom(dest.as_mut_ptr() as PVOID, dest.len() as ULONG)
             };
@@ -907,7 +891,9 @@ mod imp {
         }
 
 
-        fn fill_chunk(&mut self, dest: &mut [u8]) -> Result<usize, io::Error> {
+        fn fill_chunk(&mut self, dest: &mut [u8], _block_until_seeded: bool)
+            -> Result<usize, io::Error>
+        {
             assert_eq!(mem::size_of::<usize>(), 4);
 
             let len = dest.len() as u32;
