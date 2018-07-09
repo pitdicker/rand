@@ -132,8 +132,6 @@ extern crate winapi;
 /// [14]: https://www.w3.org/TR/WebCryptoAPI/#Crypto-method-getRandomValues
 /// [15]: https://nodejs.org/api/crypto.html#crypto_crypto_randombytes_size_callback
 /// [16]: #support-for-webassembly-and-amsjs
-
-
 #[derive(Clone, Debug)]
 pub struct OsRng;
 
@@ -266,58 +264,74 @@ fn map_err(error: SystemError) -> Error {
 mod random_device {
     use std::fs::File;
     use std::io::Read;
-    use std::sync::{Once, Mutex, ONCE_INIT};
     use super::SystemError;
 
-    // TODO: remove outer Option when `Mutex::new(None)` is a constant expression
-    static mut READ_RNG_FILE: Option<Mutex<Option<File>>> = None;
-    static READ_RNG_ONCE: Once = ONCE_INIT;
+    use std::os::unix::io::RawFd;
+    use std::os::unix::io::{AsRawFd, FromRawFd};
+    use std::sync::atomic::{AtomicIsize, Ordering};
+    use std::mem;
 
-    #[allow(unused)]
-    fn open(path: &'static str) -> Result<(), SystemError> {
-        #[cfg(not(target_os = "redox"))]
-        fn open_fn(path: &'static str) -> Result<File, SystemError> {
-            use super::libc;
-            use std::fs::OpenOptions;
-            use std::os::unix::fs::OpenOptionsExt;
+    #[cfg(not(target_os = "redox"))]
+    fn open_fn(path: &'static str) -> Result<File, SystemError> {
+        use super::libc;
+        use std::fs::OpenOptions;
+        use std::os::unix::fs::OpenOptionsExt;
+        OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(path)
+    }
+    #[cfg(target_os = "redox")] // Redox doesn't support `custom_flags`
+    fn open_fn(path: &'static str) -> Result<File, SystemError> {
+        File::open(path)
+    }
 
-            OpenOptions::new()
-                .read(true)
-                .custom_flags(libc::O_NONBLOCK)
-                .open(path)
+    // We could store an `std::fs::File` in a static protected by a Mutex here.
+    // But why do synchronisation ourselves, when the OS supports sharing the
+    // same fd across multiple threads and can handle any synchonisation for us?
+    // We can just store the fd in a atomic, but need to be careful no thread
+    // closes the fd with the automatic drop implementation on `File`.
+    pub fn get_cached_fd(path: &'static str) -> Result<RawFd, SystemError> {
+        // File descriptors are always positive, so initialize with -1.
+        static RANDOM_DEVICE_FD: AtomicIsize = AtomicIsize::new(-1);
+
+        let fd = RANDOM_DEVICE_FD.load(Ordering::Relaxed);
+        if fd != -1 { return Ok(fd as RawFd); }
+
+        // Other threads might try to open the random device concurrently. This
+        // is not ideal, but we can't use `use std::sync::Once` because we may
+        // want to try opening it again when after the first attempt failed.
+        info!("OsRng: opening random device {}", path);
+        match open_fn(path) {
+            Ok(file) => {
+                let fd = file.as_raw_fd();
+                // Only store the fd and 'forget' to close the fd if no other
+                // thread was succesful in the meantime.
+                if RANDOM_DEVICE_FD.compare_and_swap(-1, fd as isize, Ordering::Relaxed) == -1 {
+                    mem::forget(file);
+                }
+                Ok(fd)
+            }
+            Err(e) => {
+                // Did some other thread open it succesfully in the meantime?
+                let fd = RANDOM_DEVICE_FD.load(Ordering::Relaxed);
+                if fd != -1 {
+                    Ok(fd as RawFd)
+                } else {
+                    Err(e)
+                }
+            }
         }
-        #[cfg(target_os = "redox")] // Redox doesnt support `custom_flags`
-        fn open_fn(path: &'static str) -> Result<File, SystemError> {
-            File::open(path)
-        }
-
-        READ_RNG_ONCE.call_once(|| {
-            unsafe { READ_RNG_FILE = Some(Mutex::new(None)) }
-        });
-
-        // We try opening the file outside the `call_once` fn because we cannot
-        // clone the error, thus we must retry on failure.
-
-        let mutex = unsafe { READ_RNG_FILE.as_ref().unwrap() };
-        let mut guard = mutex.lock().unwrap();
-        if (*guard).is_none() {
-            info!("OsRng: opening random device {}", path);
-            let file = open_fn(path)?;
-            *guard = Some(file);
-        };
-        Ok(())
     }
 
     pub fn read(path: &'static str, dest: &mut [u8]) -> Result<usize, SystemError> {
-        open(path)?;
-
-        // We expect this function only to be used after `random_device::open`
-        // was succesful. Therefore we can assume that our memory was set with a
-        // valid object.
-        let mutex = unsafe { READ_RNG_FILE.as_ref().unwrap() };
-        let mut guard = mutex.lock().unwrap();
-        let file = (*guard).as_mut().unwrap();
-        file.read(dest)
+        let fd = get_cached_fd(path)?;
+        unsafe {
+            let mut file = File::from_raw_fd(fd);
+            let n = file.read(dest);
+            mem::forget(file);
+            n
+        }
     }
 
     // Read from `/dev/random` to determine if the OS RNG is already seeded.
