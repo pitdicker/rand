@@ -167,13 +167,13 @@ impl RngCore for OsRng {
         let mut read = 0;
         while read < dest.len() {
             let chunkz = cmp::min(max, dest.len() - read);
-            match self.fill_chunk(&mut dest[read..read+chunkz], true).map_err(map_err) {
+            match self.fill_chunk(&mut dest[read..read+chunkz], true) {
                 Ok(n) => {
                     read += n;
                     err_count = 0; // reset after each succesfull read
                 }
                 Err(e) => {
-                    match e.kind {
+                    match map_err_kind(&e) {
                         ErrorKind::Transient |
                         ErrorKind::NotReady => { // in theory doesn't happen because we do blocking reads.
                             if err_count >= RETRY_LIMIT {
@@ -213,8 +213,14 @@ impl RngCore for OsRng {
         let mut read = 0;
         while read < dest.len() {
             let chunkz = cmp::min(max, dest.len() - read);
-            read += self.fill_chunk(&mut dest[read..read+chunkz], false)
-                        .map_err(map_err)?;
+            match self.fill_chunk(&mut dest[read..read+chunkz], false) {
+                Ok(n) => read += n,
+                Err(e) => {
+                    let kind = map_err_kind(&e);
+//                    return Err(Error::with_cause(kind, "error reading from {}", self.method_str(), e);
+                    return Err(Error::with_cause(kind, self.method_str(), e));
+                }
+            };
         }
         Ok(())
     }
@@ -228,15 +234,13 @@ type SystemError = io::Error;
 #[cfg(not(all(target_arch = "wasm32",
               not(target_os = "emscripten"),
               feature = "stdweb")))]
-fn map_err(error: SystemError) -> Error {
-     use std::io;
-     match error.kind() {
-        io::ErrorKind::Interrupted =>
-            Error::new(ErrorKind::Transient, "interrupted"),
-        io::ErrorKind::WouldBlock =>
-            Error::new(ErrorKind::NotReady, "OS RNG not yet seeded"),
-        _ => Error::with_cause(ErrorKind::Unavailable,
-                "error while opening random device", error)
+fn map_err_kind(error: &SystemError) -> ErrorKind {
+    use std::io;
+    match error.kind() {
+        io::ErrorKind::Interrupted => ErrorKind::Transient,
+        io::ErrorKind::WouldBlock => ErrorKind::NotReady,
+        _ => ErrorKind::Unavailable // not sure what happened, but it will
+                                    // probably not solve itself
     }
 }
 
@@ -248,9 +252,8 @@ type SystemError = ::stdweb::web::error::Error;
 #[cfg(all(target_arch = "wasm32",
           not(target_os = "emscripten"),
           feature = "stdweb"))]
-fn map_err(error: SystemError) -> Error {
-     Error::with_cause(ErrorKind::Unavailable,
-                       "WASM Error", error)
+fn map_err_kind(error: &SystemError) -> ErrorKind {
+     ErrorKind::Unavailable
 }
 
 // Helper functions to read from a random device such as `/dev/urandom`.
