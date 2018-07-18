@@ -151,15 +151,10 @@ impl RngCore for OsRng {
         // (And why waste a system call?)
         if dest.len() == 0 { return; }
 
-        let max = self.max_chunk_size();
-        if dest.len() <= max {
-            trace!("OsRng: reading {} bytes via {}",
-                   dest.len(), self.method_str());
-        } else {
-            trace!("OsRng: reading {} bytes via {} in {} chunks of {} bytes",
-                   dest.len(), self.method_str(), (dest.len() + max) / max, max);
-        }
+        trace!("OsRng: reading {} bytes from {}",
+              dest.len(), &self.error_str()[19..]);
 
+        let max = self.max_chunk_size();
         let mut err_count = 0;
         let mut error_logged = false;
         const RETRY_LIMIT: u32 = 8;
@@ -201,14 +196,10 @@ impl RngCore for OsRng {
         // (And why waste a system call?)
         if dest.len() == 0 { return Ok(()); }
 
+        trace!("OsRng: reading {} bytes from {}",
+              dest.len(), &self.error_str()[19..]);
+
         let max = self.max_chunk_size();
-        if dest.len() <= max {
-            trace!("OsRng: reading {} bytes via {}",
-                   dest.len(), self.method_str());
-        } else {
-            trace!("OsRng: reading {} bytes via {} in {} chunks of {} bytes",
-                   dest.len(), self.method_str(), (dest.len() + max) / max, max);
-        }
 
         let mut read = 0;
         while read < dest.len() {
@@ -217,8 +208,7 @@ impl RngCore for OsRng {
                 Ok(n) => read += n,
                 Err(e) => {
                     let kind = map_err_kind(&e);
-//                    return Err(Error::with_cause(kind, "error reading from {}", self.method_str(), e);
-                    return Err(Error::with_cause(kind, self.method_str(), e));
+                    return Err(Error::with_cause(kind, self.error_str(), e));
                 }
             };
         }
@@ -386,8 +376,12 @@ impl OsRng {
 
     fn max_chunk_size(&self) -> usize { ::core::usize::MAX }
 
-    fn method_str(&self) -> &'static str {
-        if is_getrandom_available() { "getrandom" } else { "/dev/urandom" }
+    fn error_str(&self) -> &'static str {
+        if is_getrandom_available() {
+            "error reading from getrandom"
+        } else {
+            "error reading from /dev/urandom"
+        }
     }
 }
 
@@ -408,7 +402,7 @@ impl OsRng {
 
     fn max_chunk_size(&self) -> usize { ::core::usize::MAX }
 
-    fn method_str(&self) -> &'static str { "/dev/urandom" }
+    fn error_str(&self) -> &'static str { "error reading from /dev/urandom" }
 }
 
 
@@ -436,7 +430,7 @@ impl OsRng {
     #[cfg(not(target_os = "emscripten"))]
     fn max_chunk_size(&self) -> usize { ::core::usize::MAX }
 
-    fn method_str(&self) -> &'static str { "/dev/random" }
+    fn error_str(&self) -> &'static str { "error reading from /dev/random" }
 }
 
 
@@ -478,8 +472,12 @@ impl OsRng {
         1024
     }
 
-    fn method_str(&self) -> &'static str {
-        if is_getrandom_available() { "getrandom" } else { "/dev/urandom" }
+    fn error_str(&self) -> &'static str {
+        if is_getrandom_available() {
+            "error reading from getrandom"
+        } else {
+            "error reading from /dev/random"
+        }
     }
 }
 
@@ -501,7 +499,7 @@ impl OsRng {
 
     fn max_chunk_size(&self) -> usize { ::core::usize::MAX }
 
-    fn method_str(&self) -> &'static str { "cloudabi::random_get" }
+    fn error_str(&self) -> &'static str { "error reading from random_get" }
 }
 
 
@@ -538,7 +536,9 @@ impl OsRng {
 
     fn max_chunk_size(&self) -> usize { ::core::usize::MAX }
 
-    fn method_str(&self) -> &'static str { "SecRandomCopyBytes" }
+    fn error_str(&self) -> &'static str {
+        "error reading from SecRandomCopyBytes"
+    }
 }
 
 
@@ -567,7 +567,7 @@ impl OsRng {
 
     fn max_chunk_size(&self) -> usize { 256 }
 
-    fn method_str(&self) -> &'static str { "kern.arandom" }
+    fn error_str(&self) -> &'static str { "error reading from kern.arandom" }
 }
 
 
@@ -590,7 +590,7 @@ impl OsRng {
 
     fn max_chunk_size(&self) -> usize { 256 }
 
-    fn method_str(&self) -> &'static str { "getentropy" }
+    fn error_str(&self) -> &'static str { "error reading from getentropy" }
 }
 
 
@@ -607,7 +607,7 @@ impl OsRng {
 
     fn max_chunk_size(&self) -> usize { ::core::usize::MAX }
 
-    fn method_str(&self) -> &'static str { "'rand:'" }
+    fn error_str(&self) -> &'static str { "error reading from 'rand:'" }
 }
 
 
@@ -626,7 +626,7 @@ impl OsRng {
         fuchsia_zircon::sys::ZX_CPRNG_DRAW_MAX_LEN
     }
 
-    fn method_str(&self) -> &'static str { "cprng_draw" }
+    fn error_str(&self) -> &'static str { "error reading from cprng_draw" }
 }
 
 
@@ -657,7 +657,7 @@ impl OsRng {
         <ULONG>::max_value() as usize
     }
 
-    fn method_str(&self) -> &'static str { "RtlGenRandom" }
+    fn error_str(&self) -> &'static str { "error reading from RtlGenRandom" }
 }
 
 
@@ -716,11 +716,11 @@ impl OsRng {
 
     fn max_chunk_size(&self) -> usize { 65536 }
 
-    fn method_str(&self) -> &'static str {
+    fn error_str(&self) -> &'static str {
         match stdweb_interface() {
-            Ok(OsRngInterface::Browser) => "Crypto.getRandomValues",
-            Ok(OsRngInterface::Node) => "crypto.randomBytes",
-            Ok(OsRngInterface::NotSupported) => "not supported",
+            Ok(OsRngInterface::Browser) => "error reading from Crypto.getRandomValues",
+            Ok(OsRngInterface::Node) => "error reading from crypto.randomBytes",
+            Ok(OsRngInterface::NotSupported) => "error reading from Wasm environment",
             _ => "unknown",
         }
     }
