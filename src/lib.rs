@@ -238,10 +238,6 @@
 #[cfg(feature="serde1")] extern crate serde;
 #[cfg(feature="serde1")] #[macro_use] extern crate serde_derive;
 
-#[cfg(all(target_arch="wasm32", not(target_os="emscripten"), feature="stdweb"))]
-#[macro_use]
-extern crate stdweb;
-
 extern crate rand_core;
 
 #[cfg(feature = "log")] #[macro_use] extern crate log;
