@@ -14,28 +14,6 @@ use rand_core::{CryptoRng, RngCore, Error, ErrorKind, impls};
 use std::io;
 use std::cmp;
 
-#[cfg(any(target_os = "linux", target_os = "android",
-          target_os = "netbsd",
-          target_os = "dragonfly",
-          target_os = "haiku",
-          target_os = "emscripten",
-          target_os = "solaris",
-          target_os = "macos", target_os = "ios",
-          target_os = "freebsd",
-          target_os = "openbsd", target_os = "bitrig",
-))]
-extern crate libc;
-#[cfg(target_os = "cloudabi")]
-extern crate cloudabi;
-#[cfg(target_os = "fuchsia")]
-extern crate fuchsia_zircon;
-#[cfg(windows)]
-extern crate winapi;
-#[cfg(all(target_arch="wasm32", not(target_os="emscripten"), feature="stdweb"))]
-#[macro_use] extern crate stdweb;
-use __wbg_shims::*;
-
-
 /// A random number generator that retrieves randomness straight from the
 /// operating system.
 ///
@@ -221,12 +199,12 @@ impl RngCore for OsRng {
 
 #[cfg(not(all(target_arch = "wasm32",
               not(target_os = "emscripten"),
-              feature = "stdweb")))]
+          any(feature = "stdweb", feature="wasm-bindgen"))))]
 type SystemError = io::Error;
 
 #[cfg(not(all(target_arch = "wasm32",
               not(target_os = "emscripten"),
-              feature = "stdweb")))]
+          any(feature = "stdweb", feature="wasm-bindgen"))))]
 fn map_err_kind(error: &SystemError) -> ErrorKind {
     use std::io;
     match error.kind() {
@@ -239,14 +217,14 @@ fn map_err_kind(error: &SystemError) -> ErrorKind {
 
 #[cfg(all(target_arch = "wasm32",
           not(target_os = "emscripten"),
-          feature = "stdweb"))]
-type SystemError = ::stdweb::web::error::Error;
+          any(feature = "stdweb", feature="wasm-bindgen")))]
+type SystemError = Error;
 
 #[cfg(all(target_arch = "wasm32",
           not(target_os = "emscripten"),
-          feature = "stdweb"))]
+          any(feature = "stdweb", feature="wasm-bindgen")))]
 fn map_err_kind(error: &SystemError) -> ErrorKind {
-     ErrorKind::Unavailable
+     error.kind
 }
 
 // Helper functions to read from a random device such as `/dev/urandom`.
@@ -666,69 +644,61 @@ impl OsRng {
 
 #[cfg(all(target_arch = "wasm32",
           not(target_os = "emscripten"),
-          feature = "stdweb"))]
+          any(feature = "stdweb", feature = "wasm-bindgen")))]
 impl OsRng {
     /// Create a new `OsRng`.
     pub fn new() -> Self { OsRng }
 
-    #[cfg!(feature = "stdweb")]
+    #[cfg(feature = "stdweb")]
     fn fill_chunk(&mut self, dest: &mut [u8], _block_until_seeded: bool)
         -> Result<usize, SystemError>
     {
         use std::mem;
-        use stdweb::unstable::TryInto;
-        use stdweb::web::error::Error as WebError;
-
+        use self::wasm::{OsRngInterface, wasm_interface};
         assert_eq!(mem::size_of::<usize>(), 4);
-
         let len = dest.len() as u32;
         let ptr = dest.as_mut_ptr() as i32;
 
-        let result = match stdweb_interface()? {
+        match wasm_interface() {
             OsRngInterface::Browser => js! {
-                try {
-                    let array = new Uint8Array(@{ len });
-                    window.crypto.getRandomValues(array);
-                    HEAPU8.set(array, @{ ptr });
-
-                    return { success: true };
-                } catch(err) {
-                    return { success: false, error: err };
-                }
+                let array = new Uint8Array(@{ len });
+                window.crypto.getRandomValues(array);
+                HEAPU8.set(array, @{ ptr });
+                return;
             },
             OsRngInterface::Node => js! {
-                try {
-                    let bytes = require("crypto").randomBytes(@{ len });
-                    HEAPU8.set(new Uint8Array(bytes), @{ ptr });
-
-                    return { success: true };
-                } catch(err) {
-                    return { success: false, error: err };
-                }
+                let bytes = require("crypto").randomBytes(@{ len });
+                HEAPU8.set(new Uint8Array(bytes), @{ ptr });
+                return;
             },
             OsRngInterface::NotSupported => {
-                return Err(WebError::new("not supported"));
+                return Err(Error::new(ErrorKind::Unavailable, "not supported"));
             }
         };
-
-        if js!{ return @{ result.as_ref() }.success } == true {
-            Ok(dest.len())
-        } else {
-            Err(js!{ return @{ result }.error }.try_into().unwrap())
-        }
+        Ok(dest.len())
     }
-
-    #[cfg!(feature = "wasm-bindgen")]
+/*
+    #[cfg(feature = "wasm-bindgen")]
     fn fill_chunk(&mut self, dest: &mut [u8], _block_until_seeded: bool)
         -> Result<usize, SystemError>
     {
-        match *self {
-            OsRng::Node(ref n) => n.random_fill_sync(dest),
-            OsRng::Browser(ref n) => n.get_random_values(dest),
+        use __wbg_shims::*;
+        match stdweb_interface() {
+            OsRngInterface::Browser => js! {
+                let crypto = this.crypto().into();
+                crypto.get_random_values(dest);
+            },
+            OsRngInterface::Node => js! {
+                let crypto = node_require("crypto");
+                crypto.random_fill_sync(dest);
+            },
+            OsRngInterface::NotSupported => {
+                return Err(Error::new(ErrorKind::Unavailable, "not supported"));
+            }
         }
         Ok(())
     }
-
+*/
     fn max_chunk_size(&self) -> usize {
         // see https://developer.mozilla.org/en-US/docs/Web/API/Crypto/getRandomValues
         //
@@ -740,12 +710,12 @@ impl OsRng {
     }
 
     fn error_str(&self) -> &'static str {
-        match stdweb_interface() {
-            Ok(OsRngInterface::Browser) => "error reading from Crypto.getRandomValues",
-//            Ok(OsRngInterface::Node) => "error reading from crypto.randomFillSync",
-            Ok(OsRngInterface::Node) => "error reading from crypto.randomBytes",
-            Ok(OsRngInterface::NotSupported) => "error reading from Wasm environment",
-            _ => "unknown",
+        use self::wasm::{OsRngInterface, wasm_interface};
+        match wasm_interface() {
+            OsRngInterface::Browser => "error reading from Crypto.getRandomValues",
+//            OsRngInterface::Node => "error reading from crypto.randomFillSync",
+            OsRngInterface::Node => "error reading from crypto.randomBytes",
+            OsRngInterface::NotSupported => "error reading from unsupported wasm environment",
         }
     }
 }
@@ -754,13 +724,13 @@ impl OsRng {
           not(target_os = "emscripten"),
           any(feature = "stdweb", feature = "wasm-bindgen")))]
 mod wasm {
-    enum OsRngInterface {
+    pub enum OsRngInterface {
         Browser,
         Node,
         NotSupported,
     }
 
-    fn wasm_interface() -> Result<OsRngInterface, SystemError> {
+    pub fn wasm_interface() -> OsRngInterface {
         use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
 
         static JS_INTERFACE: AtomicUsize = ATOMIC_USIZE_INIT;
@@ -769,24 +739,24 @@ mod wasm {
         const NOT_SUPPORTED: usize = 0x3;
 
         match JS_INTERFACE.load(Ordering::Relaxed) {
-            BROWSER => Ok(OsRngInterface::Browser),
-            NODE => Ok(OsRngInterface::Node),
-            NOT_SUPPORTED => Ok(OsRngInterface::NotSupported),
+            BROWSER => OsRngInterface::Browser,
+            NODE => OsRngInterface::Node,
+            NOT_SUPPORTED => OsRngInterface::NotSupported,
             _ => {
-                let interface = stdweb_detect_interface()?;
+                let interface = wasm_detect_interface();
                 let interface_int = match interface {
                     OsRngInterface::Browser => BROWSER,
                     OsRngInterface::Node => NODE,
                     OsRngInterface::NotSupported => NOT_SUPPORTED,
                 };
                 JS_INTERFACE.store(interface_int, Ordering::Relaxed);
-                Ok(interface)
+                interface
             }
         }
     }
 
     #[cfg(feature = "stdweb")]
-    fn wasm_detect_interface() -> Result<OsRngInterface, SystemError> {
+    pub fn wasm_detect_interface() -> OsRngInterface {
         use stdweb::unstable::TryInto;
 
         let result = js! {
@@ -803,26 +773,27 @@ mod wasm {
                     return { success: true, ty: 2 };
                 }
 
-                return { success: true, ty: 3 };
+                return { success: false };
             } catch(err) {
-                return { success: false, error: err };
+                return { success: false };
             }
         };
 
         if js!{ return @{ result.as_ref() }.success } == true {
-            let ty = js!{ return @{ result }.ty }.try_into().unwrap();
+            let ty: i64 = js!{ return @{ result }.ty }.try_into().unwrap();
             match ty {
-                BROWSER => Ok(OsRngInterface::Browser),
-                NODE => Ok(OsRngInterface::Node),
-                NOT_SUPPORTED | _ => Ok(OsRngInterface::NotSupported),
+                1 => OsRngInterface::Browser,
+                2 => OsRngInterface::Node,
+                _ => unreachable!(),
             }
         } else {
-            Err(js!{ return @{ result }.error }.try_into().unwrap())
+            OsRngInterface::NotSupported
         }
     }
-
+/*
     #[cfg(feature = "wasm-bindgen")]
-    fn wasm_detect_interface() -> Result<OsRngInterface, SystemError> {
+    pub fn wasm_detect_interface() -> OsRngInterface {
+        use __wbg_shims::*;
         // First up we need to detect if we're running in node.js or a
         // browser. Both environments have `this` defined as an object for
         // our own scope, and we use that to look up other values.
@@ -831,9 +802,9 @@ mod wasm {
         // (either main window or web worker) and if not we're in node. If
         // it turns out we're in node.js then we require the `crypto`
         // package and use that. The API we're using was added in Node 6.x
-        // so it should be safe to assume tha it works.
+        // so it should be safe to assume that it works.
         if this.self_().is_undefined() {
-            return Ok(OsRngInterface::Node)
+            return OsRngInterface::Node
         }
 
         // If `self` is defined then we're in a browser somehow (main window
@@ -842,23 +813,22 @@ mod wasm {
         // we're in an older web browser and the OS RNG isn't available.
         let crypto = this.crypto();
         if crypto.is_undefined() {
-            let msg = "self.crypto is undefined";
-            return Err(Error::new(ErrorKind::Unavailable, msg))
+            return OsRngInterface::NotSupported
         }
 
         // Test if `crypto.getRandomValues` is undefined as well
         let crypto: BrowserCrypto = crypto.into();
         if crypto.get_random_values_fn().is_undefined() {
-            let msg = "crypto.getRandomValues is undefined";
-            return Err(Error::new(ErrorKind::Unavailable, msg))
+            return OsRngInterface::NotSupported
         }
 
         // Ok! `self.crypto.getRandomValues` is a defined value, so let's
         // assume we can do browser crypto.
-        Ok(OsRngInterface::Browser)
+        OsRngInterface::Browser
     }
+*/
 }
-
+/*
 #[cfg(all(target_arch = "wasm32",
           not(target_os = "emscripten"),
           not(feature = "stdweb"),
@@ -954,7 +924,7 @@ mod imp {
         }
     }
 }
-
+*/
 
 
 

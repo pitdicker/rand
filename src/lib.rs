@@ -253,6 +253,40 @@ extern crate rand_core;
 #[cfg(not(feature = "log"))] macro_rules! error { ($($x:tt)*) => () }
 
 
+
+#[cfg(any(target_os = "linux", target_os = "android",
+          target_os = "netbsd",
+          target_os = "dragonfly",
+          target_os = "haiku",
+          target_os = "emscripten",
+          target_os = "solaris",
+          target_os = "macos", target_os = "ios",
+          target_os = "freebsd",
+          target_os = "openbsd", target_os = "bitrig",
+))]
+extern crate libc;
+#[cfg(target_os = "cloudabi")]
+extern crate cloudabi;
+#[cfg(target_os = "fuchsia")]
+extern crate fuchsia_zircon;
+#[cfg(windows)]
+extern crate winapi;
+#[cfg(all(target_arch = "wasm32", not(target_os = "emscripten"),
+          feature = "stdweb"))]
+#[macro_use] extern crate stdweb;
+#[cfg(all(target_arch = "wasm32", not(target_os = "emscripten"),
+          feature = "wasm-bindgen"))]
+extern crate wasm_bindgen;
+
+#[cfg(all(target_arch = "wasm32", not(target_os = "emscripten"),
+          feature = "stdweb"))]
+#[allow(unused)] struct ConflictingFeatures;
+#[cfg(all(target_arch = "wasm32", not(target_os = "emscripten"),
+          feature = "wasm-bindgen"))]
+#[allow(unused)] struct ConflictingFeatures;
+
+
+
 // Re-exports from rand_core
 pub use rand_core::{RngCore, CryptoRng, SeedableRng};
 pub use rand_core::{ErrorKind, Error};
@@ -293,7 +327,8 @@ pub mod seq;
               target_os = "redox",
               target_os = "fuchsia",
               windows,
-              all(target_arch = "wasm32", feature = "stdweb")
+              all(target_arch = "wasm32", feature = "stdweb"),
+              all(target_arch = "wasm32", feature = "wasm-bindgen")
 )))]
 #[doc(hidden)]
 pub use deprecated::OsRng;
@@ -325,7 +360,8 @@ pub mod jitter {
               target_os = "redox",
               target_os = "fuchsia",
               windows,
-              all(target_arch = "wasm32", feature = "stdweb")
+              all(target_arch = "wasm32", feature = "stdweb"),
+              all(target_arch = "wasm32", feature = "wasm-bindgen")
 )))]
 #[doc(hidden)]
 pub mod os {
